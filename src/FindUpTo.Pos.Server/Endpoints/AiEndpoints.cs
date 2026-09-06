@@ -13,22 +13,33 @@ public static class AiEndpoints
         {
             if (string.IsNullOrWhiteSpace(input.Message)) return Results.BadRequest(new { message = "message is required." });
             if (input.Message.Length > 4000) return Results.BadRequest(new { message = "message is limited to 4000 characters." });
-            try
-            {
-                return Results.Ok(await ai.RunAsync(user, input.Message, cancellationToken));
-            }
-            catch (UnauthorizedAccessException ex) { return Results.Forbid(); }
+            try { return Results.Ok(await ai.RunAsync(user, input.Message, cancellationToken)); }
+            catch (UnauthorizedAccessException) { return Results.Forbid(); }
             catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
             catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 503); }
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
 
-        app.MapGet("/api/ai/status", () => Results.Ok(new
+        app.MapGet("/api/ai/status", async (AiProviderService providers, CancellationToken cancellationToken) =>
         {
-            enabled = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OPENAI_API_KEY")),
-            model = Environment.GetEnvironmentVariable("OPENAI_MODEL")?.Trim() is { Length: > 0 } model ? model : "gpt-5",
-            capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing" }
-        })).RequireAuthorization(p => p.RequireRole(AllowedRoles));
+            var provider = await providers.ResolveAsync(cancellationToken);
+            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, provider.baseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking" } });
+        }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
+
+        app.MapGet("/api/ai/providers/discover", async (AiProviderService providers, CancellationToken cancellationToken) => Results.Ok(await providers.DiscoverAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+
+        app.MapPut("/api/ai/configuration", async (AiConfigurationRequest input, ClaimsPrincipal user, AiProviderService providers, CancellationToken cancellationToken) =>
+        {
+            if (user.FindFirstValue(ClaimTypes.Role) != "Owner") return Results.Forbid();
+            var allowed = new[] { "auto", "openai", "ollama", "lmstudio", "llamacpp" };
+            if (!allowed.Contains(input.Provider.Trim().ToLowerInvariant())) return Results.BadRequest("Unsupported AI provider.");
+            if (input.Provider.Equals("openai", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(input.ApiKey)) return Results.BadRequest("API key is required for a purchased OpenAI model.");
+            await providers.ConfigureAsync(input.Provider, input.Model ?? "", input.ApiKey, input.BaseUrl, cancellationToken);
+            return Results.Ok(new { success = true, message = "AI configuration saved. API keys are never returned by this endpoint." });
+        }).RequireAuthorization(p => p.RequireRole("Owner"));
+
+        app.MapDeliveryEndpoints();
     }
 
     public sealed record AiOperateRequest(string Message);
+    public sealed record AiConfigurationRequest(string Provider, string? Model = null, string? ApiKey = null, string? BaseUrl = null);
 }
