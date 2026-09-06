@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo ========================================
 echo FindUpTo POS - build and package
- echo ========================================
+echo ========================================
 
 where dotnet >nul 2>nul
 if errorlevel 1 (
@@ -32,15 +32,15 @@ if "%INITIAL_ADMIN_PASSWORD%"=="CHANGE_THIS_ADMIN_PASSWORD" goto PasswordError
 if "%INITIAL_WAITER_PASSWORD%"=="CHANGE_THIS_WAITER_PASSWORD" goto PasswordError
 if "%INITIAL_COUNTER_PASSWORD%"=="CHANGE_THIS_COUNTER_PASSWORD" goto PasswordError
 
-echo [1/7] Restoring .NET solution...
+echo [1/8] Restoring .NET solution...
 dotnet restore FindUpTo.Pos.Server.sln
 if errorlevel 1 exit /b 1
 
-echo [2/7] Building .NET solution...
+echo [2/8] Building .NET solution...
 dotnet build FindUpTo.Pos.Server.sln --configuration Release --no-restore
 if errorlevel 1 exit /b 1
 
-echo [3/7] Running server tests...
+echo [3/8] Running server tests...
 if exist "tests\FindUpTo.Pos.Server.Tests\FindUpTo.Pos.Server.Tests.csproj" (
   dotnet test "tests\FindUpTo.Pos.Server.Tests\FindUpTo.Pos.Server.Tests.csproj" --configuration Release --no-restore
   if errorlevel 1 exit /b 1
@@ -48,23 +48,31 @@ if exist "tests\FindUpTo.Pos.Server.Tests\FindUpTo.Pos.Server.Tests.csproj" (
   echo WARNING: test project not found; build continues.
 )
 
-echo [4/7] Publishing Windows server...
+echo [4/8] Publishing Windows server...
 if exist "artifacts\windows-server" rmdir /s /q "artifacts\windows-server"
 dotnet publish "src\FindUpTo.Pos.Server\FindUpTo.Pos.Server.csproj" --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o "artifacts\windows-server"
 if errorlevel 1 exit /b 1
 
-echo [5/7] Restoring Flutter packages...
 cd mobile\flutter_app
+if not exist "android" if not exist "windows" (
+  echo [5/8] Flutter platform scaffolding is missing; generating Android and Windows runners...
+  call flutter create . --platforms=android,windows
+  if errorlevel 1 exit /b 1
+) else (
+  echo [5/8] Flutter platform scaffolding already exists.
+)
+
+echo [6/8] Restoring Flutter packages...
 call flutter pub get
 if errorlevel 1 exit /b 1
 
-echo [6/7] Analyzing and testing Flutter app...
+echo [7/8] Analyzing and testing Flutter app...
 call flutter analyze
 if errorlevel 1 exit /b 1
 call flutter test
 if errorlevel 1 exit /b 1
 
-echo [7/7] Building Android APK and Windows desktop app...
+echo [8/8] Building Android APK and Windows desktop app...
 call flutter build apk --release
 if errorlevel 1 exit /b 1
 call flutter build windows --release
@@ -74,8 +82,8 @@ cd ..\..
 echo.
 echo BUILD COMPLETE.
 echo Server:  artifacts\windows-server
- echo Android: mobile\flutter_app\build\app\outputs\flutter-apk\app-release.apk
- echo Windows: mobile\flutter_app\build\windows\x64\runner\Release
+echo Android: mobile\flutter_app\build\app\outputs\flutter-apk\app-release.apk
+echo Windows: mobile\flutter_app\build\windows\x64\runner\Release
 exit /b 0
 
 :PasswordError
