@@ -13,7 +13,7 @@ public static class BackupService
         var databasePath = GetDatabasePath(db); if (!File.Exists(databasePath)) throw new FileNotFoundException("Database file not found.", databasePath);
         var directory = Path.Combine(contentRootPath, "backups"); Directory.CreateDirectory(directory);
         var backupPath = Path.Combine(directory, $"pos-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}.db");
-        await db.Database.ExecuteSqlRawAsync($"VACUUM INTO '{backupPath.Replace("'", "''")}'", cancellationToken); return new FileInfo(backupPath);
+        await db.Database.ExecuteSqlInterpolatedAsync($"VACUUM INTO {backupPath}", cancellationToken); return new FileInfo(backupPath);
     }
     public static async Task RestoreAsync(string backupPath, CoreDbContext db, CancellationToken cancellationToken = default)
     {
