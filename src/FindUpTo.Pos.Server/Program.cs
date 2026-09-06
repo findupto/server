@@ -148,8 +148,6 @@ static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
         await db.SaveChangesAsync();
     }
 
-    if (await db.Users.AnyAsync()) return;
-
     var seedUsers = new[]
     {
         (Username: "Malik", Role: "Owner", Env: "INITIAL_OWNER_PASSWORD"),
@@ -160,12 +158,16 @@ static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
 
     foreach (var item in seedUsers)
     {
+        if (await db.Users.AnyAsync(x => x.Username == item.Username)) continue;
+
         var password = Environment.GetEnvironmentVariable(item.Env);
         if (string.IsNullOrWhiteSpace(password))
             throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}");
+
         var user = new AppUser { Username = item.Username, Role = item.Role };
         user.PasswordHash = hasher.HashPassword(user, password);
         db.Users.Add(user);
     }
+
     await db.SaveChangesAsync();
 }
