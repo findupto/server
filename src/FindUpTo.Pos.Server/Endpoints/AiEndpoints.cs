@@ -7,7 +7,7 @@ namespace FindUpTo.Pos.Server.Endpoints;
 
 public static class AiEndpoints
 {
-    private static readonly string[] AllowedRoles = ["Owner", "Manager", "Admin", "Counter"];
+    private static readonly string[] AllowedRoles = ["Owner", "Manager", "Admin", "Counter", "Kitchen"];
 
     public static void MapAiEndpoints(this WebApplication app)
     {
@@ -24,7 +24,7 @@ public static class AiEndpoints
         app.MapGet("/api/ai/status", async (AiProviderService providers, CancellationToken cancellationToken) =>
         {
             var provider = await providers.ResolveAsync(cancellationToken);
-            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta", "customer-crm", "finance-cashflow" } });
+            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta", "customer-crm", "finance-cashflow", "kitchen-kds" } });
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
 
         app.MapGet("/api/ai/finance/summary", async (CoreDbContext db, int? days, CancellationToken cancellationToken) =>
@@ -42,7 +42,10 @@ public static class AiEndpoints
             var expenseByCategory = expenses.GroupBy(x => x.Category).Select(g => new { category = g.Key, amount = Math.Round(g.Sum(x => x.Amount), 2), count = g.Count() }).OrderByDescending(x => x.amount).ToList();
             var credit = await db.CustomerCreditAccounts.AsNoTracking().Where(x => x.Active).ToListAsync(cancellationToken);
             return Results.Ok(new { periodDays = period, fromUtc = from, toUtc = DateTime.UtcNow, orderCount = orders.Count, orderValue, collectedRevenue = revenue, expenses = expensesTotal, netCash, averageOrderValue = orders.Count == 0 ? 0m : Math.Round(orderValue / orders.Count, 2), outstandingCustomerCredit = Math.Round(credit.Sum(x => x.Balance), 2), paymentByMethod, expenseByCategory, alerts = BuildFinanceAlerts(revenue, expensesTotal, credit.Sum(x => x.Balance), orders.Count) });
-        }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
+        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+
+        app.MapGet("/api/ai/kitchen/queue", async (int? limit, CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await new KitchenAiService(db).GetQueueAsync(limit ?? 100, cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Kitchen"));
+        app.MapGet("/api/ai/kitchen/recommend-next", async (CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await new KitchenAiService(db).RecommendNextAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Kitchen"));
 
         app.MapGet("/api/ai/providers/discover", async (AiProviderService providers, CancellationToken cancellationToken) => Results.Ok(await providers.DiscoverAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
