@@ -5,7 +5,6 @@ using System.Text;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Hubs;
 using FindUpTo.Pos.Server.Models;
-using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -71,6 +70,26 @@ public static class CustomerEndpoints
             var token = new JwtSecurityToken(claims: claims, expires: DateTime.UtcNow.AddDays(30), signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
             return Results.Ok(new CustomerSessionResponse(new JwtSecurityTokenHandler().WriteToken(token), customer.Id, customer.Name, customer.Phone, customer.Address, accessToken));
         }).AllowAnonymous().RequireRateLimiting("customer-session");
+
+        app.MapPost("/api/customers/{id:int}/access-token/reset", async (int id, ClaimsPrincipal user, CoreDbContext db) =>
+        {
+            var customer = await db.Customers.FindAsync(id);
+            if (customer is null) return Results.NotFound();
+
+            var accessToken = CreateAccessToken();
+            customer.CustomerAccessTokenHash = HashAccessToken(accessToken);
+            db.AuditLogs.Add(new AuditLog
+            {
+                Username = user.Identity?.Name ?? "unknown",
+                Action = "CustomerAccessTokenReset",
+                EntityType = "Customer",
+                EntityId = customer.Id.ToString(),
+                Details = "Customer access token rotated; previous token invalidated."
+            });
+            await db.SaveChangesAsync();
+
+            return Results.Ok(new { customerId = customer.Id, accessToken, message = "Store this token securely. It is returned only once." });
+        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
         app.MapGet("/api/customer/products", async (CoreDbContext db, int? categoryId) =>
         {
