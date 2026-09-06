@@ -41,7 +41,7 @@ class StaffListPage extends StatefulWidget {
 class _StaffListPageState extends State<StaffListPage> {
   dynamic data; String? error;
   @override void initState() { super.initState(); load(); }
-  Future<void> load() async { try { final value = await widget.api.get(widget.path); if (mounted) setState(() => data = value); } catch (e) { if (mounted) setState(() => error = e.toString()); } }
+  Future<void> load() async { try { final value = await widget.api.getList(widget.path); if (mounted) setState(() => data = value); } catch (e) { if (mounted) setState(() => error = e.toString()); } }
   @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: Text(widget.title)), body: error != null ? Center(child: Text(error!)) : data == null ? const Center(child: CircularProgressIndicator()) : ListView.builder(itemCount: data is List ? data.length : 1, itemBuilder: (_, i) { final value = data is List ? data[i] : data; return ListTile(title: Text(value is Map ? (value['name'] ?? value['title'] ?? value['id']?.toString() ?? 'Item').toString() : value.toString()), subtitle: Text(value is Map ? value.entries.take(4).map((e) => '${e.key}: ${e.value}').join(' • ') : '')); }));
 }
 class _Action { const _Action(this.title, this.icon, this.path); final String title; final IconData icon; final String path; }
