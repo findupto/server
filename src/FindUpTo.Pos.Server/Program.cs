@@ -19,7 +19,7 @@ var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Sourc
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
 builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
 builder.Services.AddHttpClient("business-ai", client => { client.Timeout = TimeSpan.FromSeconds(90); client.DefaultRequestHeaders.UserAgent.ParseAdd("FindUpTo-POS-AI/1.0"); });
-builder.Services.AddScoped<BusinessAiService>();
+builder.Services.AddScoped<BusinessAiService>(); builder.Services.AddScoped<AiProviderService>();
 builder.Services.AddScoped<PromotionPricingService>(); builder.Services.AddScoped<InventoryService>();
 builder.Services.AddHostedService<AutomaticBackupHostedService>(); builder.Services.AddHostedService<SyncSchemaHostedService>(); builder.Services.AddHostedService<PushNotificationHostedService>();
 builder.Services.AddSignalR(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
