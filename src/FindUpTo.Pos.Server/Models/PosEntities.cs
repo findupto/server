@@ -58,9 +58,24 @@ public sealed class OrderItem
     public decimal LineTotal { get; set; }
 }
 
+public sealed class Payment
+{
+    public int Id { get; set; }
+    public int PosOrderId { get; set; }
+    public decimal AmountTendered { get; set; }
+    public decimal AmountPaid { get; set; }
+    public decimal ChangeAmount { get; set; }
+    public string Method { get; set; } = "Cash";
+    public string Status { get; set; } = "Paid";
+    public string Reference { get; set; } = "";
+    public string CollectedByUsername { get; set; } = "";
+    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
 public sealed record CategoryRequest(string Name, int SortOrder = 0);
 public sealed record ProductRequest(int CategoryId, string Name, string Description, decimal Price, string ImageUrl, bool Available = true);
 public sealed record CustomerRequest(string Name, string Phone, string Address, string Notes);
 public sealed record OrderItemRequest(int ProductId, int Quantity, string Notes = "");
 public sealed record CreateOrderRequest(int? CustomerId, string OrderType, List<OrderItemRequest> Items, string Notes = "");
 public sealed record UpdateOrderStatusRequest(string Status);
+public sealed record CollectPaymentRequest(decimal AmountTendered, string Method = "Cash", string Reference = "");
