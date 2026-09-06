@@ -64,22 +64,22 @@ public static class PrinterEndpoints
         var text = new StringBuilder();
         text.Append("\x1B\x40");
         text.Append("\x1B\x61\x01");
-        text.Append(businessName).Append('\n');
-        if (!string.IsNullOrWhiteSpace(settings?.Phone)) text.Append(settings.Phone.Trim()).Append('\n');
-        if (!string.IsNullOrWhiteSpace(settings?.Address)) text.Append(settings.Address.Trim()).Append('\n');
-        text.Append("ORDER #").Append(order.Id).Append('\n');
-        text.Append(order.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append('\n');
+        text.Append(businessName).Append("\n");
+        if (!string.IsNullOrWhiteSpace(settings?.Phone)) text.Append(settings.Phone.Trim()).Append("\n");
+        if (!string.IsNullOrWhiteSpace(settings?.Address)) text.Append(settings.Address.Trim()).Append("\n");
+        text.Append("ORDER #").Append(order.Id).Append("\n");
+        text.Append(order.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")).Append("\n");
         text.Append("\x1B\x61\x00");
         text.Append("--------------------------------\n");
         foreach (var item in order.Items)
         {
-            text.Append(item.ProductName).Append('\n');
-            text.Append(item.Quantity).Append(" x ").Append(currency).Append(item.UnitPrice.ToString("0.00")).Append("    ").Append(currency).Append(item.LineTotal.ToString("0.00")).Append('\n');
+            text.Append(item.ProductName).Append("\n");
+            text.Append(item.Quantity).Append(" x ").Append(currency).Append(item.UnitPrice.ToString("0.00")).Append("    ").Append(currency).Append(item.LineTotal.ToString("0.00")).Append("\n");
         }
         text.Append("--------------------------------\n");
-        text.Append("Subtotal: ").Append(currency).Append(order.Subtotal.ToString("0.00")).Append('\n');
-        text.Append("Tax:      ").Append(currency).Append(order.Tax.ToString("0.00")).Append('\n');
-        text.Append("TOTAL:    ").Append(currency).Append(order.Total.ToString("0.00")).Append('\n\n');
+        text.Append("Subtotal: ").Append(currency).Append(order.Subtotal.ToString("0.00")).Append("\n");
+        text.Append("Tax:      ").Append(currency).Append(order.Tax.ToString("0.00")).Append("\n");
+        text.Append("TOTAL:    ").Append(currency).Append(order.Total.ToString("0.00")).Append("\n\n");
         text.Append("Thank you!\n\n\n");
         text.Append("\x1D\x56\x00");
         var bytes = Encoding.UTF8.GetBytes(text.ToString());
