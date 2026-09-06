@@ -15,7 +15,7 @@ public sealed record TableRequest(string Name, int Capacity = 2, bool Active = t
 public sealed record TableStatusRequest(string Status);
 public sealed record BarcodeRequest(string Barcode);
 public sealed record OrderItemRequest(int ProductId, int Quantity, string Notes = "");
-public sealed record CreateOrderRequest(int? CustomerId, string OrderType, List<OrderItemRequest> Items, string Notes = "", int? TableId = null);
+public sealed record CreateOrderRequest(int? CustomerId, string OrderType, List<OrderItemRequest> Items, string Notes = "", int? TableId = null, string? ClientOperationId = null);
 public sealed record UpdateOrderStatusRequest(string Status);
 public sealed record CollectPaymentRequest(decimal AmountTendered, string Method = "Cash", string Reference = "");
 public sealed record PromotionRequest(string Name, string Description, string DiscountType, decimal Value, bool Active = true, DateTime? StartsAtUtc = null, DateTime? EndsAtUtc = null, int? ProductId = null, int? CategoryId = null);
