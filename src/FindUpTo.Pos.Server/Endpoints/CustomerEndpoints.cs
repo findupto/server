@@ -33,7 +33,8 @@ public static class CustomerEndpoints
             }
 
             var keyText = config["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
-            if (string.IsNullOrWhiteSpace(keyText) || keyText.Length < 32) keyText = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
+            if (string.IsNullOrWhiteSpace(keyText) || keyText.Length < 32)
+                return Results.Problem("Customer authentication is not configured on the server.", statusCode: StatusCodes.Status503ServiceUnavailable);
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(keyText));
             var claims = new[]
             {
