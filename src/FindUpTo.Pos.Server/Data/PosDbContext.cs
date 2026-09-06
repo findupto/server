@@ -17,6 +17,7 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
     public DbSet<Promotion> Promotions => Set<Promotion>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +41,11 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
         modelBuilder.Entity<Conversation>().Property(x => x.Participants).HasMaxLength(2000);
         modelBuilder.Entity<Message>().Property(x => x.SenderUsername).HasMaxLength(64);
         modelBuilder.Entity<Message>().Property(x => x.Text).HasMaxLength(4000);
+        modelBuilder.Entity<AuditLog>().Property(x => x.Username).HasMaxLength(64);
+        modelBuilder.Entity<AuditLog>().Property(x => x.Action).HasMaxLength(64);
+        modelBuilder.Entity<AuditLog>().Property(x => x.EntityType).HasMaxLength(64);
+        modelBuilder.Entity<AuditLog>().Property(x => x.EntityId).HasMaxLength(64);
+        modelBuilder.Entity<AuditLog>().Property(x => x.Details).HasMaxLength(4000);
     }
 }
 
