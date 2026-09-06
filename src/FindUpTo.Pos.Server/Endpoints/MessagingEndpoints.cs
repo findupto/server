@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Hubs;
+using FindUpTo.Pos.Server.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -58,23 +59,6 @@ public static class MessagingEndpoints
             return Results.Ok(new { conversationId, username });
         }).RequireAuthorization();
     }
-}
-
-public sealed class Conversation
-{
-    public int Id { get; set; }
-    public string Title { get; set; } = "";
-    public string Participants { get; set; } = "";
-    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
-}
-
-public sealed class Message
-{
-    public int Id { get; set; }
-    public int ConversationId { get; set; }
-    public string SenderUsername { get; set; } = "";
-    public string Text { get; set; } = "";
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
 public sealed record CreateConversationRequest(string? Title, List<string> Participants);
