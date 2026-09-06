@@ -16,3 +16,4 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet restore FindUpTo.Pos.Server.sln
       - run: dotnet build FindUpTo.Pos.Server.sln --configuration Release --no-restore
+      - run: dotnet test tests/FindUpTo.Pos.Server.Tests/FindUpTo.Pos.Server.Tests.csproj --configuration Release
