@@ -72,6 +72,7 @@ app.MapGet("/api/categories", async (CoreDbContext db) => Results.Ok(await db.Ca
 app.MapGet("/api/products", async (CoreDbContext db, int? categoryId) => { var q = db.Products.AsNoTracking().Where(x => x.Available); if (categoryId.HasValue) q = q.Where(x => x.CategoryId == categoryId.Value); return Results.Ok(await q.OrderBy(x => x.Name).ToListAsync()); }).AllowAnonymous();
 
 app.MapCatalogEndpoints();
+app.MapInventoryEndpoints();
 app.MapUserEndpoints();
 app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
@@ -99,10 +100,24 @@ static async Task PrepareDatabaseAsync(CoreDbContext db)
     command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Users';";
     var hasUsersTable = Convert.ToInt64(await command.ExecuteScalarAsync()) > 0;
     await connection.CloseAsync();
-    if (hasUsersTable) return;
-    var allowCreate = string.Equals(Environment.GetEnvironmentVariable("POS_ALLOW_SCHEMA_CREATE"), "true", StringComparison.OrdinalIgnoreCase);
-    if (!allowCreate) throw new InvalidOperationException("The POS database has no schema. Create/apply EF Core migrations first, or explicitly set POS_ALLOW_SCHEMA_CREATE=true for a brand-new database.");
-    await db.Database.EnsureCreatedAsync();
+    if (!hasUsersTable)
+    {
+        var allowCreate = string.Equals(Environment.GetEnvironmentVariable("POS_ALLOW_SCHEMA_CREATE"), "true", StringComparison.OrdinalIgnoreCase);
+        if (!allowCreate) throw new InvalidOperationException("The POS database has no schema. Create/apply EF Core migrations first, or explicitly set POS_ALLOW_SCHEMA_CREATE=true for a brand-new database.");
+        await db.Database.EnsureCreatedAsync();
+    }
+    else
+    {
+        await EnsureInventorySchemaAsync(db);
+    }
+}
+
+static async Task EnsureInventorySchemaAsync(CoreDbContext db)
+{
+    await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS ProductInventories (Id INTEGER NOT NULL CONSTRAINT PK_ProductInventories PRIMARY KEY AUTOINCREMENT, ProductId INTEGER NOT NULL, QuantityOnHand TEXT NOT NULL, ReorderLevel TEXT NOT NULL, TrackInventory INTEGER NOT NULL DEFAULT 0, UpdatedAtUtc TEXT NOT NULL);");
+    await db.Database.ExecuteSqlRawAsync("CREATE UNIQUE INDEX IF NOT EXISTS IX_ProductInventories_ProductId ON ProductInventories(ProductId);");
+    await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS StockMovements (Id INTEGER NOT NULL CONSTRAINT PK_StockMovements PRIMARY KEY AUTOINCREMENT, ProductId INTEGER NOT NULL, QuantityChange TEXT NOT NULL, BalanceAfter TEXT NOT NULL, Type TEXT NOT NULL, Reason TEXT NOT NULL, Username TEXT NOT NULL, CreatedAtUtc TEXT NOT NULL);");
+    await db.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS IX_StockMovements_ProductId_CreatedAtUtc ON StockMovements(ProductId, CreatedAtUtc);");
 }
 
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
