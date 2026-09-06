@@ -57,16 +57,11 @@ public sealed class InventoryService(CoreDbContext db)
         if (order.Status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return [];
 
         var reason = $"Order {order.Id}";
-        var saleMovements = await db.StockMovements
-            .Where(x => x.Type == "Sale" && x.Reason == reason)
-            .ToListAsync();
+        var saleMovements = await db.StockMovements.Where(x => x.Type == "Sale" && x.Reason == reason).ToListAsync();
         if (saleMovements.Count == 0) return [];
 
-        var alreadyRestored = await db.StockMovements
-            .Where(x => x.Type == "SaleReturn" && x.Reason == reason)
-            .Select(x => x.ProductId)
-            .ToHashSetAsync();
-
+        var restoredProductIds = await db.StockMovements.Where(x => x.Type == "SaleReturn" && x.Reason == reason).Select(x => x.ProductId).ToListAsync();
+        var alreadyRestored = restoredProductIds.ToHashSet();
         var changedProducts = new List<int>();
         foreach (var group in saleMovements.GroupBy(x => x.ProductId))
         {
@@ -77,16 +72,7 @@ public sealed class InventoryService(CoreDbContext db)
             if (inventory is null) continue;
             inventory.QuantityOnHand += quantity;
             inventory.UpdatedAtUtc = DateTime.UtcNow;
-            db.StockMovements.Add(new StockMovement
-            {
-                ProductId = group.Key,
-                QuantityChange = quantity,
-                BalanceAfter = inventory.QuantityOnHand,
-                Type = "SaleReturn",
-                Reason = reason,
-                Username = username,
-                CreatedAtUtc = DateTime.UtcNow
-            });
+            db.StockMovements.Add(new StockMovement { ProductId = group.Key, QuantityChange = quantity, BalanceAfter = inventory.QuantityOnHand, Type = "SaleReturn", Reason = reason, Username = username, CreatedAtUtc = DateTime.UtcNow });
             changedProducts.Add(group.Key);
         }
 
