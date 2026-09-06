@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using FindUpTo.Pos.Server.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,8 +9,7 @@ public static class BackupEndpoints
     {
         app.MapPost("/api/admin/backup", async (HttpContext context, CoreDbContext db, IWebHostEnvironment env) =>
         {
-            var connection = db.Database.GetDbConnection();
-            var databasePath = connection.DataSource;
+            var databasePath = db.Database.GetDbConnection().DataSource;
             if (string.IsNullOrWhiteSpace(databasePath) || databasePath == ":memory:")
                 return Results.BadRequest("A file-backed SQLite database is required.");
 
@@ -20,16 +18,14 @@ public static class BackupEndpoints
 
             var backupDirectory = Path.Combine(env.ContentRootPath, "backups");
             Directory.CreateDirectory(backupDirectory);
-            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff");
             var backupPath = Path.Combine(backupDirectory, $"pos-{stamp}.db");
+            var escapedPath = backupPath.Replace("'", "''");
 
-            await using var destination = new FileStream(backupPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
-            await db.Database.ExecuteSqlRawAsync($"VACUUM INTO '{backupPath.Replace("'", "''")}'");
-            await destination.FlushAsync();
-            await destination.DisposeAsync();
-
-            await AuditEndpoints.WriteAsync(db, context.User, "Created", "Backup", stamp, backupPath);
-            return Results.Ok(new { fileName = Path.GetFileName(backupPath), createdAtUtc = DateTime.UtcNow });
+            await db.Database.ExecuteSqlRawAsync($"VACUUM INTO '{escapedPath}'");
+            var info = new FileInfo(backupPath);
+            await AuditEndpoints.WriteAsync(db, context.User, "Created", "Backup", stamp, info.Name);
+            return Results.Ok(new { fileName = info.Name, sizeBytes = info.Length, createdAtUtc = info.CreationTimeUtc });
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
         app.MapGet("/api/admin/backups", (IWebHostEnvironment env) =>
