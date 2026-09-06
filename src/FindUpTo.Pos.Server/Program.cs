@@ -28,22 +28,10 @@ builder.Services.AddRateLimiter(options =>
 {
     options.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = 10,
-            Window = TimeSpan.FromMinutes(1),
-            QueueLimit = 0,
-            AutoReplenishment = true
-        }));
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
     options.AddPolicy("customer-session", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = 5,
-            Window = TimeSpan.FromMinutes(1),
-            QueueLimit = 0,
-            AutoReplenishment = true
-        }));
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true }));
 });
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
@@ -80,7 +68,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await PrepareDatabaseAsync(db);
     await SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>());
 }
 
@@ -96,17 +84,10 @@ app.UseAuthorization();
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "findupto-pos-server" }));
 app.MapPost("/api/auth/login", async (LoginRequest request, CoreDbContext db, IPasswordHasher<AppUser> hasher) =>
 {
-    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrEmpty(request.Password))
-        return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrEmpty(request.Password)) return Results.Unauthorized();
     var user = await db.Users.SingleOrDefaultAsync(x => x.Username == request.Username.Trim() && x.Active);
-    if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed)
-        return Results.Unauthorized();
-    var claims = new[]
-    {
-        new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-        new Claim(ClaimTypes.Name, user.Username),
-        new Claim(ClaimTypes.Role, user.Role)
-    };
+    if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed) return Results.Unauthorized();
+    var claims = new[] { new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()), new Claim(ClaimTypes.Name, user.Username), new Claim(ClaimTypes.Role, user.Role) };
     var token = new JwtSecurityToken(claims: claims, expires: DateTime.UtcNow.AddHours(12), signingCredentials: new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256));
     return Results.Ok(new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token), user.Id, user.Username, user.Role));
 }).AllowAnonymous().RequireRateLimiting("login");
@@ -139,6 +120,24 @@ app.MapNotificationEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
+static async Task PrepareDatabaseAsync(CoreDbContext db)
+{
+    var connection = db.Database.GetDbConnection();
+    await connection.OpenAsync();
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Users';";
+    var hasUsersTable = Convert.ToInt64(await command.ExecuteScalarAsync()) > 0;
+    await connection.CloseAsync();
+
+    if (hasUsersTable) return;
+
+    var allowCreate = string.Equals(Environment.GetEnvironmentVariable("POS_ALLOW_SCHEMA_CREATE"), "true", StringComparison.OrdinalIgnoreCase);
+    if (!allowCreate)
+        throw new InvalidOperationException("The POS database has no schema. Create/apply EF Core migrations first, or explicitly set POS_ALLOW_SCHEMA_CREATE=true for a brand-new database.");
+
+    await db.Database.EnsureCreatedAsync();
+}
+
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
 {
     if (!await db.BusinessSettings.AnyAsync())
@@ -166,16 +165,12 @@ static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
     foreach (var item in seedUsers)
     {
         if (await db.Users.AnyAsync(x => x.Username == item.Username)) continue;
-
         var password = Environment.GetEnvironmentVariable(item.Env);
-        if (string.IsNullOrWhiteSpace(password))
-            throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}");
-
+        if (string.IsNullOrWhiteSpace(password)) throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}");
         var user = new AppUser { Username = item.Username, Role = item.Role };
         user.PasswordHash = hasher.HashPassword(user, password);
         db.Users.Add(user);
     }
-
     await db.SaveChangesAsync();
 }
 
