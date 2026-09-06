@@ -37,6 +37,7 @@ class PosApiClient {
 
   Future<Map<String,dynamic>> login(String username, String password) async { final d=await _request('POST','/api/auth/login',body:{'username':username,'password':password}); await saveToken(d['token']); return Map<String,dynamic>.from(d); }
   Future<Map<String,dynamic>> me() async=>Map<String,dynamic>.from(await _request('GET','/api/me'));
+  Future<Map<String,dynamic>> settings() async=>Map<String,dynamic>.from(await _request('GET','/api/settings'));
 
   Future<Map<String,dynamic>> createCustomerSession({String? name,String? phone,String? address}) async { final d=await _request('POST','/api/customer/session',body:{'name':name,'phone':phone,'address':address}); await saveToken(d['token']); return Map<String,dynamic>.from(d); }
   Future<List<dynamic>> products() async=>getList('/api/customer/products');
