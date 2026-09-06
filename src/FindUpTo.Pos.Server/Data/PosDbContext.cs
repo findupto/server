@@ -13,6 +13,7 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
     public DbSet<PosOrder> Orders => Set<PosOrder>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<Promotion> Promotions => Set<Promotion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -31,6 +32,8 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
         modelBuilder.Entity<OrderItem>().HasOne<PosOrder>().WithMany(x => x.Items).HasForeignKey(x => x.PosOrderId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<Payment>().Property(x => x.Method).HasMaxLength(32);
         modelBuilder.Entity<Payment>().Property(x => x.Status).HasMaxLength(32);
+        modelBuilder.Entity<Promotion>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<Promotion>().Property(x => x.DiscountType).HasMaxLength(16);
     }
 }
 
