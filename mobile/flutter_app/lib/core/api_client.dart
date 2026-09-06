@@ -10,6 +10,9 @@ class PosApiClient {
   Future<void> saveToken(String token) => _storage.write(key: 'pos_jwt', value: token);
   Future<String?> token() => _storage.read(key: 'pos_jwt');
   Future<void> clearToken() => _storage.delete(key: 'pos_jwt');
+  Future<void> saveCustomerAccessToken(String token) => _storage.write(key: 'customer_access_token', value: token);
+  Future<String?> customerAccessToken() => _storage.read(key: 'customer_access_token');
+  Future<void> clearCustomerAccessToken() => _storage.delete(key: 'customer_access_token');
 
   Future<dynamic> _request(String method, String path, {Object? body}) async {
     final t = await token();
@@ -35,7 +38,16 @@ class PosApiClient {
   Future<Map<String,dynamic>> me() async=>Map<String,dynamic>.from(await _request('GET','/api/me'));
   Future<Map<String,dynamic>> settings() async=>Map<String,dynamic>.from(await _request('GET','/api/settings'));
 
-  Future<Map<String,dynamic>> createCustomerSession({String? name,String? phone,String? address}) async { final d=await _request('POST','/api/customer/session',body:{'name':name,'phone':phone,'address':address}); await saveToken(d['token']); return Map<String,dynamic>.from(d); }
+  Future<Map<String,dynamic>> createCustomerSession({String? name,String? phone,String? address,String? notes,String? accessToken}) async {
+    final existingAccessToken = accessToken ?? await customerAccessToken();
+    final body = <String,dynamic>{'name':name,'phone':phone,'address':address,'notes':notes};
+    if (existingAccessToken != null && existingAccessToken.isNotEmpty) body['accessToken'] = existingAccessToken;
+    final d = Map<String,dynamic>.from(await _request('POST','/api/customer/session',body:body));
+    await saveToken(d['token']);
+    final issuedAccessToken = d['accessToken'];
+    if (issuedAccessToken is String && issuedAccessToken.isNotEmpty) await saveCustomerAccessToken(issuedAccessToken);
+    return d;
+  }
   Future<List<dynamic>> products() async=>getList('/api/customer/products');
   Future<List<dynamic>> promotions() async=>getList('/api/customer/promotions');
   Future<List<dynamic>> orders() async=>getList('/api/customer/orders');
