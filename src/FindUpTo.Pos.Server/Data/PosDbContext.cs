@@ -3,10 +3,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FindUpTo.Pos.Server.Data;
 
-public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(options)
+public class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(options)
 {
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<BusinessSetting> BusinessSettings => Set<BusinessSetting>();
+    public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<PosOrder> Orders => Set<PosOrder>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -16,5 +21,14 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         modelBuilder.Entity<BusinessSetting>().Property(x => x.BusinessName).HasMaxLength(160);
         modelBuilder.Entity<BusinessSetting>().Property(x => x.CurrencyCode).HasMaxLength(8);
         modelBuilder.Entity<BusinessSetting>().Property(x => x.CurrencySymbol).HasMaxLength(16);
+        modelBuilder.Entity<Category>().Property(x => x.Name).HasMaxLength(120);
+        modelBuilder.Entity<Product>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<Customer>().Property(x => x.Phone).HasMaxLength(32);
+        modelBuilder.Entity<PosOrder>().Property(x => x.OrderType).HasMaxLength(32);
+        modelBuilder.Entity<PosOrder>().Property(x => x.Status).HasMaxLength(32);
+        modelBuilder.Entity<OrderItem>().Property(x => x.ProductName).HasMaxLength(160);
+        modelBuilder.Entity<OrderItem>().HasOne<PosOrder>().WithMany(x => x.Items).HasForeignKey(x => x.PosOrderId).OnDelete(DeleteBehavior.Cascade);
     }
 }
+
+public sealed class CoreDbContext(DbContextOptions<PosDbContext> options) : PosDbContext(options);
