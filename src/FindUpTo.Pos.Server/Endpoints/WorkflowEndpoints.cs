@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Hubs;
 using FindUpTo.Pos.Server.Models;
+using FindUpTo.Pos.Server.Services;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,7 +15,7 @@ public static class WorkflowEndpoints
 
     public static void MapWorkflowEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub, PromotionPricingService pricing) =>
         {
             if (input.Items is null || input.Items.Count == 0) return Results.BadRequest("Order must contain at least one item.");
             if (input.Items.Count > 100) return Results.BadRequest("An order cannot contain more than 100 line items.");
@@ -40,10 +41,7 @@ public static class WorkflowEndpoints
                 var product = products[item.ProductId];
                 order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = Math.Round(product.Price, 2), Quantity = item.Quantity, Notes = item.Notes?.Trim() ?? "", LineTotal = Math.Round(product.Price * item.Quantity, 2) });
             }
-            order.Subtotal = Math.Round(order.Items.Sum(x => x.LineTotal), 2);
-            var taxRate = await db.BusinessSettings.Select(x => x.TaxPercent).SingleAsync();
-            order.Tax = Math.Round(order.Subtotal * taxRate / 100m, 2);
-            order.Total = Math.Round(order.Subtotal + order.Tax, 2);
+            await pricing.ApplyAsync(order, products);
             await using var tx = await db.Database.BeginTransactionAsync();
             db.Orders.Add(order);
             await db.SaveChangesAsync();
