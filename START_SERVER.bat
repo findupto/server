@@ -14,3 +14,4 @@ if not defined POS_JWT_KEY (
 if not defined ASPNETCORE_URLS set "ASPNETCORE_URLS=http://0.0.0.0:5000"
 echo Starting FindUpTo POS server on %ASPNETCORE_URLS% ...
 artifacts\windows-server\FindUpTo.Pos.Server.exe
+exit /b %ERRORLEVEL%
