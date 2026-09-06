@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Claims;
 using System.Text;
 using FindUpTo.Pos.Server.Data;
 using Microsoft.EntityFrameworkCore;
