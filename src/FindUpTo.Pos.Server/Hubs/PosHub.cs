@@ -1,11 +1,13 @@
+using FindUpTo.Pos.Server.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace FindUpTo.Pos.Server.Hubs;
 
 [Authorize]
-public sealed class PosHub : Hub
+public sealed class PosHub(CoreDbContext db) : Hub
 {
     public async Task JoinRoleGroup()
     {
@@ -18,12 +20,19 @@ public sealed class PosHub : Hub
         if (!string.IsNullOrWhiteSpace(Context.UserIdentifier)) await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{Context.UserIdentifier}");
     }
 
-    public Task JoinConversationGroup(int conversationId) => Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
+    public async Task JoinConversationGroup(int conversationId)
+    {
+        var username = Context.User?.Identity?.Name ?? "";
+        var conversation = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == conversationId);
+        if (conversation is not null && conversation.Participants.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(username, StringComparer.OrdinalIgnoreCase))
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"conversation:{conversationId}");
+    }
 
     public async Task Typing(int conversationId, bool isTyping)
     {
         var username = Context.User?.Identity?.Name ?? "";
-        if (string.IsNullOrWhiteSpace(username)) return;
+        var conversation = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == conversationId);
+        if (conversation is null || !conversation.Participants.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(username, StringComparer.OrdinalIgnoreCase)) return;
         await Clients.Group($"conversation:{conversationId}").SendAsync("typing.changed", new { conversationId, username, isTyping });
     }
 
