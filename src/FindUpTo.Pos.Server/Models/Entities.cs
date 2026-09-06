@@ -13,10 +13,10 @@ public sealed class AppUser
 public sealed class BusinessSetting
 {
     public int Id { get; set; }
-    public string BusinessName { get; set; } = "MK Pizza & Ice Bar";
-    public string Phone { get; set; } = "03169700025";
-    public string Address { get; set; } = "Abbas Chowk Collage Road Bhakkar";
-    public decimal TaxPercent { get; set; } = 0;
+    public string BusinessName { get; set; } = "FindUpTo POS";
+    public string Phone { get; set; } = "";
+    public string Address { get; set; } = "";
+    public decimal TaxPercent { get; set; }
     public string CurrencyCode { get; set; } = "PKR";
     public string CurrencySymbol { get; set; } = "Rs.";
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
