@@ -12,7 +12,6 @@ namespace FindUpTo.Pos.Server.Tests;
 public sealed class PosApiFactory : WebApplicationFactory<Program>
 {
     private readonly string databaseName = $"pos-tests-{Guid.NewGuid():N}";
-
     public PosApiFactory()
     {
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
@@ -22,7 +21,6 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("INITIAL_WAITER_PASSWORD", "Waiter-Test-Password-123!");
         Environment.SetEnvironmentVariable("INITIAL_COUNTER_PASSWORD", "Counter-Test-Password-123!");
     }
-
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.ConfigureServices(services =>
@@ -37,7 +35,6 @@ public sealed class PosApiFactory : WebApplicationFactory<Program>
 public class PosApiTests : IClassFixture<PosApiFactory>
 {
     private readonly HttpClient client;
-
     public PosApiTests(PosApiFactory factory) => client = factory.CreateClient();
 
     [Fact]
@@ -101,31 +98,36 @@ public class PosApiTests : IClassFixture<PosApiFactory>
         var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"Food-{Guid.NewGuid():N}", sortOrder = 1 });
         var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
         Assert.NotNull(category);
-
-        var productResponse = await client.PostAsJsonAsync("/api/products", new
-        {
-            categoryId = category!.id,
-            name = "Test Burger",
-            description = "",
-            price = 100m,
-            imageUrl = "",
-            available = true
-        });
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Test Burger", description = "", price = 100m, imageUrl = "", available = true });
         var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
         Assert.Equal(HttpStatusCode.Created, productResponse.StatusCode);
-        Assert.NotNull(product);
-
-        var orderResponse = await client.PostAsJsonAsync("/api/orders", new
-        {
-            items = new[] { new { productId = product!.id, quantity = 2, notes = "" } },
-            orderType = "Counter",
-            notes = ""
-        });
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product!.id, quantity = 2, notes = "" } }, orderType = "Counter", notes = "" });
         Assert.Equal(HttpStatusCode.Created, orderResponse.StatusCode);
         var order = await orderResponse.Content.ReadFromJsonAsync<OrderResult>();
         Assert.NotNull(order);
         Assert.Equal(200m, order!.subtotal);
+        Assert.Equal(0m, order.discount);
         Assert.Equal(200m, order.total);
+    }
+
+    [Fact]
+    public async Task ProductPromotionIsAppliedToOrderTotal()
+    {
+        await AuthenticateAsync("MK", "Admin-Test-Password-123!");
+        var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"Promo-{Guid.NewGuid():N}", sortOrder = 1 });
+        var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Promo Burger", description = "", price = 100m, imageUrl = "", available = true });
+        var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
+        var promotionResponse = await client.PostAsJsonAsync("/api/promotions", new { name = "20 Percent Off", description = "", discountType = "Percent", value = 20m, active = true, productId = product!.id });
+        Assert.Equal(HttpStatusCode.Created, promotionResponse.StatusCode);
+
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product.id, quantity = 2, notes = "" } }, orderType = "Counter", notes = "" });
+        Assert.Equal(HttpStatusCode.Created, orderResponse.StatusCode);
+        var order = await orderResponse.Content.ReadFromJsonAsync<OrderResult>();
+        Assert.NotNull(order);
+        Assert.Equal(200m, order!.subtotal);
+        Assert.Equal(40m, order.discount);
+        Assert.Equal(160m, order.total);
     }
 
     [Fact]
@@ -134,23 +136,9 @@ public class PosApiTests : IClassFixture<PosApiFactory>
         await AuthenticateAsync("MK", "Admin-Test-Password-123!");
         var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"Unavailable-{Guid.NewGuid():N}", sortOrder = 1 });
         var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
-        var productResponse = await client.PostAsJsonAsync("/api/products", new
-        {
-            categoryId = category!.id,
-            name = "Unavailable Product",
-            description = "",
-            price = 50m,
-            imageUrl = "",
-            available = false
-        });
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Unavailable Product", description = "", price = 50m, imageUrl = "", available = false });
         var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
-
-        var orderResponse = await client.PostAsJsonAsync("/api/orders", new
-        {
-            items = new[] { new { productId = product!.id, quantity = 1, notes = "" } },
-            orderType = "Counter",
-            notes = ""
-        });
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product!.id, quantity = 1, notes = "" } }, orderType = "Counter", notes = "" });
         Assert.Equal(HttpStatusCode.BadRequest, orderResponse.StatusCode);
     }
 
@@ -160,24 +148,10 @@ public class PosApiTests : IClassFixture<PosApiFactory>
         await AuthenticateAsync("MK", "Admin-Test-Password-123!");
         var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"Payment-{Guid.NewGuid():N}", sortOrder = 1 });
         var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
-        var productResponse = await client.PostAsJsonAsync("/api/products", new
-        {
-            categoryId = category!.id,
-            name = "Payment Product",
-            description = "",
-            price = 100m,
-            imageUrl = "",
-            available = true
-        });
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Payment Product", description = "", price = 100m, imageUrl = "", available = true });
         var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
-        var orderResponse = await client.PostAsJsonAsync("/api/orders", new
-        {
-            items = new[] { new { productId = product!.id, quantity = 1, notes = "" } },
-            orderType = "Counter",
-            notes = ""
-        });
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product!.id, quantity = 1, notes = "" } }, orderType = "Counter", notes = "" });
         var order = await orderResponse.Content.ReadFromJsonAsync<IdResult>();
-
         var firstPayment = await client.PostAsJsonAsync($"/api/orders/{order!.id}/payment", new { amountTendered = 100m, method = "Cash", reference = "" });
         Assert.Equal(HttpStatusCode.OK, firstPayment.StatusCode);
         var secondPayment = await client.PostAsJsonAsync($"/api/orders/{order.id}/payment", new { amountTendered = 100m, method = "Cash", reference = "" });
@@ -194,5 +168,5 @@ public class PosApiTests : IClassFixture<PosApiFactory>
 
     private sealed record LoginResult(string token, int userId, string username, string role);
     private sealed record IdResult(int id);
-    private sealed record OrderResult(decimal subtotal, decimal tax, decimal total);
+    private sealed record OrderResult(decimal subtotal, decimal discount, decimal tax, decimal total);
 }
