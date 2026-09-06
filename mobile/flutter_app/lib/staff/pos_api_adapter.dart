@@ -5,7 +5,7 @@ class PosApiAdapter {
   final PosApiClient api;
 
   Future<List<Map<String, dynamic>>> products() async =>
-      (await api.staffOrders()).cast<Map<String, dynamic>>();
+      (await api.getList('/api/products')).cast<Map<String, dynamic>>();
 
   Future<Map<String, dynamic>> createSale({
     int? customerId,
@@ -16,9 +16,11 @@ class PosApiAdapter {
     String? clientOperationId,
   }) => api.createStaffOrder(
         customerId: customerId,
+        tableId: tableId,
         items: items,
         orderType: orderType,
         notes: notes,
+        clientOperationId: clientOperationId,
       );
 
   Future<Map<String, dynamic>> pay({
@@ -26,11 +28,13 @@ class PosApiAdapter {
     required double amountTendered,
     required String method,
     String reference = '',
+    String? clientOperationId,
   }) => api.collectPayment(
         orderId,
         amountTendered: amountTendered,
         method: method,
         reference: reference,
+        clientOperationId: clientOperationId,
       );
 
   Future<List<dynamic>> tables() => api.getList('/api/tables?active=true');
