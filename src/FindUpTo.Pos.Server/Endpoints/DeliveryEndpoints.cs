@@ -23,16 +23,126 @@ public static class DeliveryEndpoints
             var latestByRider = locations.GroupBy(x => x.RiderId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.RecordedAtUtc).First());
             return Results.Ok(riders.Select(x => new { x.rider.Id, x.username, x.rider.VehicleType, x.rider.VehicleNumber, x.rider.Online, x.rider.Available, x.rider.LastSeenAtUtc, location = latestByRider.GetValueOrDefault(x.rider.Id) }));
         }).RequireAuthorization(p => p.RequireRole(ManagementRoles));
-        app.MapPost("/api/delivery/riders", async (RiderCreateRequest input, ClaimsPrincipal user, CoreDbContext db) => { if (await db.Riders.AnyAsync(x => x.UserId == input.UserId)) return Results.Conflict("This user is already a rider."); var staff = await db.Users.FindAsync(input.UserId); if (staff is null || !staff.Active) return Results.NotFound("Staff user not found."); var rider = new RiderProfile { UserId = input.UserId, VehicleType = input.VehicleType.Trim(), VehicleNumber = input.VehicleNumber.Trim() }; db.Riders.Add(rider); db.AuditLogs.Add(new AuditLog { Username = user.Identity?.Name ?? "unknown", Action = "CreateRider", EntityType = "Rider", Details = $"UserId={input.UserId}" }); await db.SaveChangesAsync(); return Results.Ok(new { rider.Id, rider.UserId, rider.VehicleType, rider.VehicleNumber }); }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-        app.MapPost("/api/delivery/riders/me/availability", async (RiderAvailabilityRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) => { var rider = await GetRiderAsync(db, user); if (rider is null) return Results.Forbid(); rider.Online = input.Online; rider.Available = input.Available; rider.LastSeenAtUtc = DateTime.UtcNow; await db.SaveChangesAsync(); await hub.Clients.All.SendAsync("rider.updated", new { riderId = rider.Id, online = rider.Online, available = rider.Available, lastSeenAtUtc = rider.LastSeenAtUtc }); return Results.Ok(new { rider.Id, rider.Online, rider.Available }); }).RequireAuthorization(p => p.RequireRole("Rider"));
-        app.MapPost("/api/delivery/riders/me/location", async (RiderLocationRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) => { if (input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180) return Results.BadRequest("Invalid GPS coordinates."); if (input.AccuracyMeters is < 0 || input.SpeedMetersPerSecond is < 0 || input.HeadingDegrees is < 0 or > 360) return Results.BadRequest("Invalid GPS telemetry."); var rider = await GetRiderAsync(db, user); if (rider is null) return Results.Forbid(); rider.Online = true; rider.LastSeenAtUtc = DateTime.UtcNow; var location = new RiderLocation { RiderId = rider.Id, Latitude = input.Latitude, Longitude = input.Longitude, AccuracyMeters = input.AccuracyMeters, SpeedMetersPerSecond = input.SpeedMetersPerSecond, HeadingDegrees = input.HeadingDegrees }; db.RiderLocations.Add(location); await db.SaveChangesAsync(); var deliveries = await db.DeliveryTrackings.AsNoTracking().Where(x => x.RiderId == rider.Id && x.Status != "Delivered" && x.Status != "Cancelled").Select(x => x.TrackingCode).ToListAsync(); foreach (var code in deliveries) await hub.Clients.Group($"tracking:{code}").SendAsync("location.updated", new { trackingCode = code, riderId = rider.Id, latitude = location.Latitude, longitude = location.Longitude, accuracyMeters = location.AccuracyMeters, speedMetersPerSecond = location.SpeedMetersPerSecond, headingDegrees = location.HeadingDegrees, recordedAtUtc = location.RecordedAtUtc }); await hub.Clients.All.SendAsync("rider.location", new { riderId = rider.Id, location.Latitude, location.Longitude, location.AccuracyMeters, location.SpeedMetersPerSecond, location.HeadingDegrees, location.RecordedAtUtc }); return Results.Ok(location); }).RequireAuthorization(p => p.RequireRole("Rider"));
-        app.MapPost("/api/delivery/orders/{orderId:int}/assign-rider", async (int orderId, AssignRiderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) => { var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId); if (tracking is null) return Results.NotFound("Delivery tracking is not enabled for this order."); var rider = await db.Riders.FindAsync(input.RiderId); if (rider is null || !rider.Available) return Results.BadRequest("Rider is unavailable."); tracking.RiderId = rider.Id; tracking.Status = "Assigned"; tracking.UpdatedAtUtc = DateTime.UtcNow; await db.SaveChangesAsync(); await hub.Clients.All.SendAsync("delivery.updated", new { orderId, trackingCode = tracking.TrackingCode, riderId = rider.Id, status = tracking.Status, updatedAtUtc = tracking.UpdatedAtUtc }); return Results.Ok(await BuildTrackingAsync(db, tracking)); }).RequireAuthorization(p => p.RequireRole(ManagementRoles));
-        app.MapPost("/api/delivery/orders/{orderId:int}/tracking", async (int orderId, DeliveryTrackingRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) => { var order = await db.Orders.FindAsync(orderId); if (order is null) return Results.NotFound(); if (!order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Only delivery orders can have delivery tracking."); if (input.DestinationLatitude is < -90 or > 90 || input.DestinationLongitude is < -180 or > 180) return Results.BadRequest("Invalid destination coordinates."); var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId); if (tracking is null) { tracking = new DeliveryTracking { OrderId = orderId, TrackingCode = await CreateUniqueTrackingCodeAsync(db), Status = string.IsNullOrWhiteSpace(input.Status) ? "Preparing" : input.Status.Trim() }; db.DeliveryTrackings.Add(tracking); } tracking.Status = string.IsNullOrWhiteSpace(input.Status) ? tracking.Status : input.Status.Trim(); tracking.DeliveryAddress = input.DeliveryAddress?.Trim() ?? ""; tracking.DestinationLatitude = input.DestinationLatitude; tracking.DestinationLongitude = input.DestinationLongitude; tracking.UpdatedAtUtc = DateTime.UtcNow; await db.SaveChangesAsync(); await hub.Clients.All.SendAsync("delivery.updated", new { orderId, trackingCode = tracking.TrackingCode, status = tracking.Status, updatedAtUtc = tracking.UpdatedAtUtc }); return Results.Ok(await BuildTrackingAsync(db, tracking)); }).RequireAuthorization(p => p.RequireRole(ManagementRoles));
-        app.MapGet("/api/customer/orders/{orderId:int}/tracking", async (int orderId, ClaimsPrincipal user, CoreDbContext db) => { if (!int.TryParse(user.FindFirstValue("customer_id"), out var customerId)) return Results.Unauthorized(); var order = await db.Orders.SingleOrDefaultAsync(x => x.Id == orderId && x.CustomerId == customerId); if (order is null) return Results.NotFound(); if (!order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Only delivery orders can be tracked."); var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId); if (tracking is null) { tracking = new DeliveryTracking { OrderId = orderId, TrackingCode = await CreateUniqueTrackingCodeAsync(db), Status = order.Status == "New" ? "Preparing" : order.Status, DeliveryAddress = "" }; db.DeliveryTrackings.Add(tracking); await db.SaveChangesAsync(); } return Results.Ok(await BuildTrackingAsync(db, tracking)); }).RequireAuthorization(p => p.RequireRole("Customer"));
-        app.MapGet("/api/delivery/track/{trackingCode}/route", async (string trackingCode, CoreDbContext db, DeliveryRoutingService routing, CancellationToken cancellationToken) => { var code = trackingCode.Trim().ToUpperInvariant(); var tracking = await db.DeliveryTrackings.AsNoTracking().SingleOrDefaultAsync(x => x.TrackingCode == code, cancellationToken); if (tracking is null) return Results.NotFound(); if (!tracking.DestinationLatitude.HasValue || !tracking.DestinationLongitude.HasValue || !tracking.RiderId.HasValue) return Results.Ok(new { available = false }); var location = await db.RiderLocations.AsNoTracking().Where(x => x.RiderId == tracking.RiderId.Value).OrderByDescending(x => x.RecordedAtUtc).FirstOrDefaultAsync(cancellationToken); if (location is null) return Results.Ok(new { available = false }); var route = await routing.GetRouteAsync(location.Latitude, location.Longitude, tracking.DestinationLatitude.Value, tracking.DestinationLongitude.Value, cancellationToken); return route is null ? Results.Ok(new { available = false }) : Results.Ok(new { available = true, distanceMeters = route.DistanceMeters, durationSeconds = route.DurationSeconds, etaUtc = DateTime.UtcNow.AddSeconds(route.DurationSeconds), geometry = route.Geometry.Select(p => new[] { p.Latitude, p.Longitude }) }); }).AllowAnonymous().RequireRateLimiting("customer-session");
-        app.MapGet("/api/delivery/track/{trackingCode}", async (string trackingCode, CoreDbContext db) => { var code = trackingCode.Trim().ToUpperInvariant(); if (code.Length < 8 || code.Length > 32) return Results.BadRequest("Invalid tracking code."); var tracking = await db.DeliveryTrackings.AsNoTracking().SingleOrDefaultAsync(x => x.TrackingCode == code); return tracking is null ? Results.NotFound() : Results.Ok(await BuildTrackingAsync(db, tracking)); }).AllowAnonymous().RequireRateLimiting("customer-session");
+
+        app.MapPost("/api/delivery/riders", async (RiderCreateRequest input, ClaimsPrincipal user, CoreDbContext db) =>
+        {
+            if (await db.Riders.AnyAsync(x => x.UserId == input.UserId)) return Results.Conflict("This user is already a rider.");
+            var staff = await db.Users.FindAsync(input.UserId);
+            if (staff is null || !staff.Active) return Results.NotFound("Staff user not found.");
+            var rider = new RiderProfile { UserId = input.UserId, VehicleType = input.VehicleType.Trim(), VehicleNumber = input.VehicleNumber.Trim() };
+            db.Riders.Add(rider);
+            db.AuditLogs.Add(new AuditLog { Username = user.Identity?.Name ?? "unknown", Action = "CreateRider", EntityType = "Rider", Details = $"UserId={input.UserId}" });
+            await db.SaveChangesAsync();
+            return Results.Ok(new { rider.Id, rider.UserId, rider.VehicleType, rider.VehicleNumber });
+        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+
+        app.MapPost("/api/delivery/riders/me/availability", async (RiderAvailabilityRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        {
+            var rider = await GetRiderAsync(db, user);
+            if (rider is null) return Results.Forbid();
+            rider.Online = input.Online; rider.Available = input.Available; rider.LastSeenAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await hub.Clients.All.SendAsync("rider.updated", new { riderId = rider.Id, online = rider.Online, available = rider.Available, lastSeenAtUtc = rider.LastSeenAtUtc });
+            return Results.Ok(new { rider.Id, rider.Online, rider.Available });
+        }).RequireAuthorization(p => p.RequireRole("Rider"));
+
+        app.MapPost("/api/delivery/riders/me/location", async (RiderLocationRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub, DeliveryRoutingService routing, CancellationToken cancellationToken) =>
+        {
+            if (input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180) return Results.BadRequest("Invalid GPS coordinates.");
+            if (input.AccuracyMeters is < 0 || input.SpeedMetersPerSecond is < 0 || input.HeadingDegrees is < 0 or > 360) return Results.BadRequest("Invalid GPS telemetry.");
+            var rider = await GetRiderAsync(db, user);
+            if (rider is null) return Results.Forbid();
+            rider.Online = true; rider.LastSeenAtUtc = DateTime.UtcNow;
+            var location = new RiderLocation { RiderId = rider.Id, Latitude = input.Latitude, Longitude = input.Longitude, AccuracyMeters = input.AccuracyMeters, SpeedMetersPerSecond = input.SpeedMetersPerSecond, HeadingDegrees = input.HeadingDegrees };
+            db.RiderLocations.Add(location);
+            await db.SaveChangesAsync(cancellationToken);
+            var deliveries = await db.DeliveryTrackings.AsNoTracking().Where(x => x.RiderId == rider.Id && x.Status != "Delivered" && x.Status != "Cancelled").ToListAsync(cancellationToken);
+            foreach (var delivery in deliveries)
+            {
+                DeliveryRouteResult? route = null;
+                if (delivery.DestinationLatitude.HasValue && delivery.DestinationLongitude.HasValue)
+                    route = await routing.GetRouteAsync(location.Latitude, location.Longitude, delivery.DestinationLatitude.Value, delivery.DestinationLongitude.Value, cancellationToken);
+                await hub.Clients.Group($"tracking:{delivery.TrackingCode}").SendAsync("location.updated", new { trackingCode = delivery.TrackingCode, riderId = rider.Id, latitude = location.Latitude, longitude = location.Longitude, accuracyMeters = location.AccuracyMeters, speedMetersPerSecond = location.SpeedMetersPerSecond, headingDegrees = location.HeadingDegrees, recordedAtUtc = location.RecordedAtUtc, etaUtc = route is null ? (DateTime?)null : DateTime.UtcNow.AddSeconds(route.DurationSeconds), distanceMeters = route?.DistanceMeters, durationSeconds = route?.DurationSeconds }, cancellationToken);
+            }
+            await hub.Clients.All.SendAsync("rider.location", new { riderId = rider.Id, location.Latitude, location.Longitude, location.AccuracyMeters, location.SpeedMetersPerSecond, location.HeadingDegrees, location.RecordedAtUtc }, cancellationToken);
+            return Results.Ok(location);
+        }).RequireAuthorization(p => p.RequireRole("Rider"));
+
+        app.MapPost("/api/delivery/orders/{orderId:int}/assign-rider", async (int orderId, AssignRiderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        {
+            var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId);
+            if (tracking is null) return Results.NotFound("Delivery tracking is not enabled for this order.");
+            var rider = await db.Riders.FindAsync(input.RiderId);
+            if (rider is null || !rider.Available) return Results.BadRequest("Rider is unavailable.");
+            tracking.RiderId = rider.Id; tracking.Status = "Assigned"; tracking.UpdatedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await hub.Clients.All.SendAsync("delivery.updated", new { orderId, trackingCode = tracking.TrackingCode, riderId = rider.Id, status = tracking.Status, updatedAtUtc = tracking.UpdatedAtUtc });
+            return Results.Ok(await BuildTrackingAsync(db, tracking));
+        }).RequireAuthorization(p => p.RequireRole(ManagementRoles));
+
+        app.MapPost("/api/delivery/orders/{orderId:int}/tracking", async (int orderId, DeliveryTrackingRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        {
+            var order = await db.Orders.FindAsync(orderId);
+            if (order is null) return Results.NotFound();
+            if (!order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Only delivery orders can have delivery tracking.");
+            if (input.DestinationLatitude is < -90 or > 90 || input.DestinationLongitude is < -180 or > 180) return Results.BadRequest("Invalid destination coordinates.");
+            var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId);
+            if (tracking is null) { tracking = new DeliveryTracking { OrderId = orderId, TrackingCode = await CreateUniqueTrackingCodeAsync(db), Status = string.IsNullOrWhiteSpace(input.Status) ? "Preparing" : input.Status.Trim() }; db.DeliveryTrackings.Add(tracking); }
+            tracking.Status = string.IsNullOrWhiteSpace(input.Status) ? tracking.Status : input.Status.Trim(); tracking.DeliveryAddress = input.DeliveryAddress?.Trim() ?? ""; tracking.DestinationLatitude = input.DestinationLatitude; tracking.DestinationLongitude = input.DestinationLongitude; tracking.UpdatedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            await hub.Clients.All.SendAsync("delivery.updated", new { orderId, trackingCode = tracking.TrackingCode, status = tracking.Status, updatedAtUtc = tracking.UpdatedAtUtc });
+            return Results.Ok(await BuildTrackingAsync(db, tracking));
+        }).RequireAuthorization(p => p.RequireRole(ManagementRoles));
+
+        app.MapGet("/api/customer/orders/{orderId:int}/tracking", async (int orderId, ClaimsPrincipal user, CoreDbContext db) =>
+        {
+            if (!int.TryParse(user.FindFirstValue("customer_id"), out var customerId)) return Results.Unauthorized();
+            var order = await db.Orders.SingleOrDefaultAsync(x => x.Id == orderId && x.CustomerId == customerId);
+            if (order is null) return Results.NotFound();
+            if (!order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Only delivery orders can be tracked.");
+            var tracking = await db.DeliveryTrackings.SingleOrDefaultAsync(x => x.OrderId == orderId);
+            if (tracking is null) { tracking = new DeliveryTracking { OrderId = orderId, TrackingCode = await CreateUniqueTrackingCodeAsync(db), Status = order.Status == "New" ? "Preparing" : order.Status, DeliveryAddress = "" }; db.DeliveryTrackings.Add(tracking); await db.SaveChangesAsync(); }
+            return Results.Ok(await BuildTrackingAsync(db, tracking));
+        }).RequireAuthorization(p => p.RequireRole("Customer"));
+
+        app.MapGet("/api/delivery/track/{trackingCode}/route", async (string trackingCode, CoreDbContext db, DeliveryRoutingService routing, CancellationToken cancellationToken) =>
+        {
+            var code = trackingCode.Trim().ToUpperInvariant();
+            var tracking = await db.DeliveryTrackings.AsNoTracking().SingleOrDefaultAsync(x => x.TrackingCode == code, cancellationToken);
+            if (tracking is null) return Results.NotFound();
+            if (!tracking.DestinationLatitude.HasValue || !tracking.DestinationLongitude.HasValue || !tracking.RiderId.HasValue) return Results.Ok(new { available = false });
+            var location = await db.RiderLocations.AsNoTracking().Where(x => x.RiderId == tracking.RiderId.Value).OrderByDescending(x => x.RecordedAtUtc).FirstOrDefaultAsync(cancellationToken);
+            if (location is null) return Results.Ok(new { available = false });
+            var route = await routing.GetRouteAsync(location.Latitude, location.Longitude, tracking.DestinationLatitude.Value, tracking.DestinationLongitude.Value, cancellationToken);
+            return route is null ? Results.Ok(new { available = false }) : Results.Ok(new { available = true, distanceMeters = route.DistanceMeters, durationSeconds = route.DurationSeconds, etaUtc = DateTime.UtcNow.AddSeconds(route.DurationSeconds), geometry = route.Geometry.Select(p => new[] { p.Latitude, p.Longitude }) });
+        }).AllowAnonymous().RequireRateLimiting("customer-session");
+
+        app.MapGet("/api/delivery/track/{trackingCode}", async (string trackingCode, CoreDbContext db) =>
+        {
+            var code = trackingCode.Trim().ToUpperInvariant();
+            if (code.Length < 8 || code.Length > 32) return Results.BadRequest("Invalid tracking code.");
+            var tracking = await db.DeliveryTrackings.AsNoTracking().SingleOrDefaultAsync(x => x.TrackingCode == code);
+            return tracking is null ? Results.NotFound() : Results.Ok(await BuildTrackingAsync(db, tracking));
+        }).AllowAnonymous().RequireRateLimiting("customer-session");
     }
-    private static async Task<RiderProfile?> GetRiderAsync(CoreDbContext db, ClaimsPrincipal user) { if (!int.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"), out var userId)) return null; return await db.Riders.SingleOrDefaultAsync(x => x.UserId == userId); }
-    private static async Task<object> BuildTrackingAsync(CoreDbContext db, DeliveryTracking tracking) { var rider = tracking.RiderId.HasValue ? await db.Riders.AsNoTracking().SingleOrDefaultAsync(x => x.Id == tracking.RiderId.Value) : null; var location = tracking.RiderId.HasValue ? await db.RiderLocations.AsNoTracking().Where(x => x.RiderId == tracking.RiderId.Value).OrderByDescending(x => x.RecordedAtUtc).FirstOrDefaultAsync() : null; var username = rider is null ? null : await db.Users.AsNoTracking().Where(x => x.Id == rider.UserId).Select(x => x.Username).SingleOrDefaultAsync(); return new { tracking.OrderId, tracking.TrackingCode, tracking.Status, tracking.DeliveryAddress, tracking.DestinationLatitude, tracking.DestinationLongitude, tracking.UpdatedAtUtc, rider = rider is null ? null : new { rider.Id, username, rider.VehicleType, rider.VehicleNumber, rider.Online, rider.LastSeenAtUtc }, location }; }
-    private static async Task<string> CreateUniqueTrackingCodeAsync(CoreDbContext db) { for (var attempt = 0; attempt < 5; attempt++) { var code = $"FU{Convert.ToHexString(RandomNumberGenerator.GetBytes(6))}"; if (!await db.DeliveryTrackings.AnyAsync(x => x.TrackingCode == code)) return code; } throw new InvalidOperationException("Unable to allocate a unique delivery tracking code."); }
+
+    private static async Task<RiderProfile?> GetRiderAsync(CoreDbContext db, ClaimsPrincipal user)
+    {
+        if (!int.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"), out var userId)) return null;
+        return await db.Riders.SingleOrDefaultAsync(x => x.UserId == userId);
+    }
+
+    private static async Task<object> BuildTrackingAsync(CoreDbContext db, DeliveryTracking tracking)
+    {
+        var rider = tracking.RiderId.HasValue ? await db.Riders.AsNoTracking().SingleOrDefaultAsync(x => x.Id == tracking.RiderId.Value) : null;
+        var location = tracking.RiderId.HasValue ? await db.RiderLocations.AsNoTracking().Where(x => x.RiderId == tracking.RiderId.Value).OrderByDescending(x => x.RecordedAtUtc).FirstOrDefaultAsync() : null;
+        var username = rider is null ? null : await db.Users.AsNoTracking().Where(x => x.Id == rider.UserId).Select(x => x.Username).SingleOrDefaultAsync();
+        return new { tracking.OrderId, tracking.TrackingCode, tracking.Status, tracking.DeliveryAddress, tracking.DestinationLatitude, tracking.DestinationLongitude, tracking.UpdatedAtUtc, rider = rider is null ? null : new { rider.Id, username, rider.VehicleType, rider.VehicleNumber, rider.Online, rider.LastSeenAtUtc }, location };
+    }
+
+    private static async Task<string> CreateUniqueTrackingCodeAsync(CoreDbContext db)
+    {
+        for (var attempt = 0; attempt < 5; attempt++) { var code = $"FU{Convert.ToHexString(RandomNumberGenerator.GetBytes(6))}"; if (!await db.DeliveryTrackings.AnyAsync(x => x.TrackingCode == code)) return code; }
+        throw new InvalidOperationException("Unable to allocate a unique delivery tracking code.");
+    }
 }
