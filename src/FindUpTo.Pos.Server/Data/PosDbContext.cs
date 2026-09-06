@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FindUpTo.Pos.Server.Data;
 
-public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(options)
+public class PosDbContext(DbContextOptions options) : DbContext(options)
 {
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<BusinessSetting> BusinessSettings => Set<BusinessSetting>();
@@ -33,3 +33,5 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         modelBuilder.Entity<Payment>().Property(x => x.Status).HasMaxLength(32);
     }
 }
+
+public sealed class CoreDbContext(DbContextOptions<CoreDbContext> options) : PosDbContext(options);
