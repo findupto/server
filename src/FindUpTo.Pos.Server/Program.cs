@@ -20,7 +20,10 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
-if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32) jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
+if (string.IsNullOrWhiteSpace(jwtKey) && builder.Environment.IsDevelopment())
+    jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+    throw new InvalidOperationException("A JWT signing key of at least 32 characters is required. Configure Jwt:Key or POS_JWT_KEY.");
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
@@ -47,7 +50,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<CoreDbContext>();
     await db.Database.EnsureCreatedAsync();
-    await SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>());
+    await SeedAsync(db, scope.ServiceProvider.GetRequiredService<IPasswordHasher<AppUser>>(), app.Environment);
 }
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.UseAuthentication();
@@ -165,14 +168,19 @@ static async Task NotifyOrder(WebApplication app, PosOrder order)
     await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
 }
 
-static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
+static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher, IWebHostEnvironment environment)
 {
     if (!await db.BusinessSettings.AnyAsync()) { db.BusinessSettings.Add(new BusinessSetting()); await db.SaveChangesAsync(); }
     if (await db.Users.AnyAsync()) return;
     var seedUsers = new[] { (Username: "Malik", Role: "Owner", Env: "INITIAL_OWNER_PASSWORD"), (Username: "MK", Role: "Admin", Env: "INITIAL_ADMIN_PASSWORD"), (Username: "WR", Role: "Waiter", Env: "INITIAL_WAITER_PASSWORD"), (Username: "CP", Role: "Counter", Env: "INITIAL_COUNTER_PASSWORD") };
     foreach (var item in seedUsers)
     {
-        var password = Environment.GetEnvironmentVariable(item.Env); if (string.IsNullOrWhiteSpace(password)) password = $"CHANGE_ME_{item.Username}";
+        var password = Environment.GetEnvironmentVariable(item.Env);
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            if (!environment.IsDevelopment()) throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}");
+            password = $"CHANGE_ME_{item.Username}";
+        }
         var user = new AppUser { Username = item.Username, Role = item.Role }; user.PasswordHash = hasher.HashPassword(user, password); db.Users.Add(user);
     }
     await db.SaveChangesAsync();
