@@ -15,8 +15,15 @@ public static class SyncEndpoints
             var categories = await db.Categories.AsNoTracking().Select(x => new { x.Id, x.Name, x.Active, x.SortOrder }).ToListAsync(ct);
             var promotions = await db.Promotions.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).ToListAsync(ct);
             var tables = await db.Tables.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.Name, x.Capacity, x.Status, x.Active, x.UpdatedAtUtc }).ToListAsync(ct);
-            return Results.Ok(new { serverTimeUtc = DateTime.UtcNow, since = watermark, products, categories, promotions, tables });
+            var orders = await db.Orders.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.CustomerId, x.TableId, x.CreatedByUsername, x.OrderType, x.Status, x.Subtotal, x.Tax, x.Total, x.Notes, x.CreatedAtUtc, x.UpdatedAtUtc, Items = x.Items.Select(i => new { i.Id, i.ProductId, i.ProductName, i.UnitPrice, i.Quantity, i.Notes, i.LineTotal }) }).ToListAsync(ct);
+            var payments = await db.Payments.AsNoTracking().Where(x => x.CreatedAtUtc > watermark).Select(x => new { x.Id, x.PosOrderId, x.AmountTendered, x.AmountPaid, x.ChangeAmount, x.Method, x.Status, x.Reference, x.CollectedByUsername, x.CreatedAtUtc }).ToListAsync(ct);
+            var customers = await db.Customers.AsNoTracking().Where(x => x.CreatedAtUtc > watermark).Select(x => new { x.Id, x.Name, x.Phone, x.Address, x.Notes, x.CreatedAtUtc }).ToListAsync(ct);
+            var next = DateTime.UtcNow;
+            return Results.Ok(new { serverTimeUtc = next, since = watermark, products, categories, promotions, tables, customers, orders, payments });
         }).RequireAuthorization();
+
+        app.MapGet("/api/sync/conflicts", async (CoreDbContext db, CancellationToken ct) => Results.Ok(await db.SyncConflicts.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc).Take(200).ToListAsync(ct)))
+            .RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
         app.MapPost("/api/sync/push-orders", async (List<CreateOrderRequest> orders, HttpContext context, CoreDbContext db, CancellationToken ct) =>
         {
@@ -24,23 +31,23 @@ public static class SyncEndpoints
             var results = new List<object>();
             foreach (var input in orders)
             {
-                if (string.IsNullOrWhiteSpace(input.ClientOperationId) || input.ClientOperationId.Length > 128)
-                { results.Add(new { success = false, error = "ClientOperationId is required for offline synchronization." }); continue; }
+                var username = context.User.Identity?.Name ?? "sync";
+                if (string.IsNullOrWhiteSpace(input.ClientOperationId) || input.ClientOperationId.Length > 128) { results.Add(new { success = false, error = "ClientOperationId is required for offline synchronization." }); continue; }
                 var existing = await db.SyncOperations.AsNoTracking().SingleOrDefaultAsync(x => x.ClientOperationId == input.ClientOperationId, ct);
-                if (existing is not null)
-                { results.Add(new { success = true, duplicate = true, orderId = existing.OrderId }); continue; }
+                if (existing is not null) { results.Add(new { success = true, duplicate = true, orderId = existing.OrderId }); continue; }
                 if (input.Items is null || input.Items.Count == 0) { results.Add(new { success = false, error = "Order has no items." }); continue; }
                 var ids = input.Items.Select(x => x.ProductId).Distinct().ToList();
                 var products = await db.Products.Where(x => ids.Contains(x.Id) && x.Available).ToDictionaryAsync(x => x.Id, ct);
-                if (products.Count != ids.Count) { results.Add(new { success = false, error = "One or more products are unavailable." }); continue; }
-                if (input.CustomerId.HasValue && !await db.Customers.AnyAsync(x => x.Id == input.CustomerId.Value, ct)) { results.Add(new { success = false, error = "Customer not found." }); continue; }
-                var order = new PosOrder { CustomerId = input.CustomerId, TableId = input.TableId, CreatedByUsername = context.User.Identity?.Name ?? "sync", OrderType = string.IsNullOrWhiteSpace(input.OrderType) ? "Counter" : input.OrderType.Trim(), Notes = input.Notes.Trim() };
+                if (products.Count != ids.Count) { results.Add(new { success = false, conflict = true, error = "One or more products are unavailable." }); continue; }
+                if (input.CustomerId.HasValue && !await db.Customers.AnyAsync(x => x.Id == input.CustomerId.Value, ct)) { results.Add(new { success = false, conflict = true, error = "Customer not found." }); continue; }
+                if (input.TableId.HasValue && !await db.Tables.AnyAsync(x => x.Id == input.TableId.Value && x.Active, ct)) { results.Add(new { success = false, conflict = true, error = "Table not found or inactive." }); continue; }
+                var order = new PosOrder { CustomerId = input.CustomerId, TableId = input.TableId, CreatedByUsername = username, OrderType = string.IsNullOrWhiteSpace(input.OrderType) ? "Counter" : input.OrderType.Trim(), Notes = input.Notes.Trim() };
                 foreach (var item in input.Items)
                 {
                     if (item.Quantity <= 0 || !products.TryGetValue(item.ProductId, out var product)) { order = null!; break; }
                     order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = item.Quantity, Notes = item.Notes.Trim(), LineTotal = product.Price * item.Quantity });
                 }
-                if (order is null) { results.Add(new { success = false, error = "Invalid quantity or product." }); continue; }
+                if (order is null) { results.Add(new { success = false, conflict = true, error = "Invalid quantity or product." }); continue; }
                 order.Subtotal = order.Items.Sum(x => x.LineTotal);
                 var setting = await db.BusinessSettings.AsNoTracking().FirstOrDefaultAsync(ct);
                 var taxRate = setting?.TaxPercent ?? 0m;
@@ -49,7 +56,7 @@ public static class SyncEndpoints
                 try
                 {
                     db.Orders.Add(order); await db.SaveChangesAsync(ct);
-                    db.SyncOperations.Add(new SyncOperation { ClientOperationId = input.ClientOperationId, OrderId = order.Id, CreatedByUsername = context.User.Identity?.Name ?? "sync" });
+                    db.SyncOperations.Add(new SyncOperation { ClientOperationId = input.ClientOperationId, OrderId = order.Id, CreatedByUsername = username });
                     await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
                     await AuditEndpoints.WriteAsync(db, context.User, "Synced", "Order", order.Id.ToString(), $"ClientOperationId={input.ClientOperationId}");
                     results.Add(new { success = true, duplicate = false, orderId = order.Id });
