@@ -69,19 +69,20 @@ app.MapPost("/api/auth/login", async (LoginRequest request, CoreDbContext db, IP
 
 app.MapGet("/api/me", (ClaimsPrincipal user) => Results.Ok(new { username = user.Identity?.Name, role = user.FindFirstValue(ClaimTypes.Role) })).RequireAuthorization();
 app.MapGet("/api/settings", async (CoreDbContext db) => Results.Ok(await db.BusinessSettings.AsNoTracking().SingleAsync())).RequireAuthorization();
-app.MapPut("/api/settings", async (BusinessSetting input, CoreDbContext db) =>
+app.MapPut("/api/settings", async (BusinessSetting input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     var current = await db.BusinessSettings.SingleAsync();
     current.BusinessName = input.BusinessName.Trim(); current.Phone = input.Phone.Trim(); current.Address = input.Address.Trim(); current.TaxPercent = input.TaxPercent;
     current.CurrencyCode = input.CurrencyCode.Trim().ToUpperInvariant(); current.CurrencySymbol = input.CurrencySymbol.Trim(); current.UpdatedAtUtc = DateTime.UtcNow;
-    await db.SaveChangesAsync(); return Results.Ok(current);
+    await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "Updated", "BusinessSetting", current.Id.ToString(), current.BusinessName); return Results.Ok(current);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager"));
 
 app.MapGet("/api/categories", async (CoreDbContext db) => Results.Ok(await db.Categories.AsNoTracking().Where(x => x.Active).OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync())).AllowAnonymous();
-app.MapPost("/api/categories", async (CategoryRequest input, CoreDbContext db) =>
+app.MapPost("/api/categories", async (CategoryRequest input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name)) return Results.BadRequest("Category name is required.");
     var item = new Category { Name = input.Name.Trim(), SortOrder = input.SortOrder }; db.Categories.Add(item); await db.SaveChangesAsync();
+    await AuditEndpoints.WriteAsync(db, user, "Created", "Category", item.Id.ToString(), item.Name);
     return Results.Created($"/api/categories/{item.Id}", item);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
@@ -90,18 +91,19 @@ app.MapGet("/api/products", async (CoreDbContext db, int? categoryId) =>
     var q = db.Products.AsNoTracking().Where(x => x.Available); if (categoryId.HasValue) q = q.Where(x => x.CategoryId == categoryId.Value);
     return Results.Ok(await q.OrderBy(x => x.Name).ToListAsync());
 }).AllowAnonymous();
-app.MapPost("/api/products", async (ProductRequest input, CoreDbContext db) =>
+app.MapPost("/api/products", async (ProductRequest input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name) || input.Price < 0) return Results.BadRequest("Valid product name and price are required.");
     if (!await db.Categories.AnyAsync(x => x.Id == input.CategoryId)) return Results.BadRequest("Category not found.");
     var item = new Product { CategoryId = input.CategoryId, Name = input.Name.Trim(), Description = input.Description?.Trim() ?? "", Price = input.Price, ImageUrl = input.ImageUrl?.Trim() ?? "", Available = input.Available };
-    db.Products.Add(item); await db.SaveChangesAsync(); return Results.Created($"/api/products/{item.Id}", item);
+    db.Products.Add(item); await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "Created", "Product", item.Id.ToString(), item.Name);
+    return Results.Created($"/api/products/{item.Id}", item);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-app.MapPut("/api/products/{id:int}", async (int id, ProductRequest input, CoreDbContext db) =>
+app.MapPut("/api/products/{id:int}", async (int id, ProductRequest input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     var item = await db.Products.FindAsync(id); if (item is null) return Results.NotFound();
     item.CategoryId = input.CategoryId; item.Name = input.Name.Trim(); item.Description = input.Description?.Trim() ?? ""; item.Price = input.Price; item.ImageUrl = input.ImageUrl?.Trim() ?? ""; item.Available = input.Available; item.UpdatedAtUtc = DateTime.UtcNow;
-    await db.SaveChangesAsync(); return Results.Ok(item);
+    await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "Updated", "Product", item.Id.ToString(), item.Name); return Results.Ok(item);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
 app.MapGet("/api/customers", async (CoreDbContext db, string? search) =>
@@ -109,11 +111,11 @@ app.MapGet("/api/customers", async (CoreDbContext db, string? search) =>
     var q = db.Customers.AsNoTracking(); if (!string.IsNullOrWhiteSpace(search)) q = q.Where(x => x.Name.Contains(search) || x.Phone.Contains(search));
     return Results.Ok(await q.OrderByDescending(x => x.CreatedAtUtc).Take(100).ToListAsync());
 }).RequireAuthorization();
-app.MapPost("/api/customers", async (CustomerRequest input, CoreDbContext db) =>
+app.MapPost("/api/customers", async (CustomerRequest input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name) && string.IsNullOrWhiteSpace(input.Phone)) return Results.BadRequest("Customer name or phone is required.");
     var item = new Customer { Name = input.Name.Trim(), Phone = input.Phone.Trim(), Address = input.Address.Trim(), Notes = input.Notes.Trim() }; db.Customers.Add(item); await db.SaveChangesAsync();
-    return Results.Created($"/api/customers/{item.Id}", item);
+    await AuditEndpoints.WriteAsync(db, user, "Created", "Customer", item.Id.ToString(), item.Name); return Results.Created($"/api/customers/{item.Id}", item);
 }).RequireAuthorization();
 
 app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db) =>
@@ -127,12 +129,11 @@ app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user
     foreach (var line in input.Items)
     {
         if (line.Quantity <= 0) return Results.BadRequest("Quantity must be greater than zero.");
-        var product = products[line.ProductId];
-        order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = line.Quantity, Notes = line.Notes.Trim(), LineTotal = product.Price * line.Quantity });
+        var product = products[line.ProductId]; order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = line.Quantity, Notes = line.Notes.Trim(), LineTotal = product.Price * line.Quantity });
     }
     order.Subtotal = order.Items.Sum(x => x.LineTotal); var taxRate = await db.BusinessSettings.Select(x => x.TaxPercent).SingleAsync();
     order.Tax = Math.Round(order.Subtotal * taxRate / 100m, 2); order.Total = order.Subtotal + order.Tax;
-    db.Orders.Add(order); await db.SaveChangesAsync(); await NotifyOrder(app, order);
+    db.Orders.Add(order); await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "Created", "Order", order.Id.ToString(), $"Total={order.Total:0.00}"); await NotifyOrder(app, order);
     return Results.Created($"/api/orders/{order.Id}", await db.Orders.AsNoTracking().Include(x => x.Items).SingleAsync(x => x.Id == order.Id));
 }).RequireAuthorization();
 
@@ -145,13 +146,13 @@ app.MapGet("/api/orders/{id:int}", async (int id, CoreDbContext db) =>
 {
     var order = await db.Orders.AsNoTracking().Include(x => x.Items).SingleOrDefaultAsync(x => x.Id == id); return order is null ? Results.NotFound() : Results.Ok(order);
 }).RequireAuthorization();
-app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, CoreDbContext db) =>
+app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, ClaimsPrincipal user, CoreDbContext db) =>
 {
     var allowed = new[] { "New", "Accepted", "Preparing", "Ready", "OutForDelivery", "Served", "Completed", "Cancelled" };
     if (!allowed.Contains(input.Status, StringComparer.OrdinalIgnoreCase)) return Results.BadRequest("Invalid order status.");
     var order = await db.Orders.FindAsync(id); if (order is null) return Results.NotFound();
     order.Status = allowed.First(x => string.Equals(x, input.Status, StringComparison.OrdinalIgnoreCase)); order.UpdatedAtUtc = DateTime.UtcNow;
-    await db.SaveChangesAsync(); await NotifyOrder(app, order); return Results.Ok(order);
+    await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "StatusChanged", "Order", order.Id.ToString(), order.Status); await NotifyOrder(app, order); return Results.Ok(order);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
 app.MapUserEndpoints();
@@ -159,6 +160,8 @@ app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
 app.MapMessagingEndpoints();
 app.MapCustomerEndpoints();
+app.MapReportEndpoints();
+app.MapAuditEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
@@ -166,8 +169,7 @@ public partial class Program { }
 
 static async Task NotifyOrder(WebApplication app, PosOrder order)
 {
-    var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
-    await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
+    var hub = app.Services.GetRequiredService<IHubContext<PosHub>>(); await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
 }
 
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher, IWebHostEnvironment environment)
@@ -178,11 +180,7 @@ static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher, I
     foreach (var item in seedUsers)
     {
         var password = Environment.GetEnvironmentVariable(item.Env);
-        if (string.IsNullOrWhiteSpace(password))
-        {
-            if (!environment.IsDevelopment()) throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}");
-            password = $"CHANGE_ME_{item.Username}";
-        }
+        if (string.IsNullOrWhiteSpace(password)) { if (!environment.IsDevelopment()) throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}"); password = $"CHANGE_ME_{item.Username}"; }
         var user = new AppUser { Username = item.Username, Role = item.Role }; user.PasswordHash = hasher.HashPassword(user, password); db.Users.Add(user);
     }
     await db.SaveChangesAsync();
