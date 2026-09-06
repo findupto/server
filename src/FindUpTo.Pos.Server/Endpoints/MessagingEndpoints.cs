@@ -48,6 +48,15 @@ public static class MessagingEndpoints
             await hub.Clients.Group($"conversation:{conversationId}").SendAsync("message.created", message);
             return Results.Created($"/api/messages/{conversationId}", message);
         }).RequireAuthorization();
+
+        app.MapPost("/api/messages/{conversationId:int}/read", async (int conversationId, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        {
+            var username = user.Identity?.Name ?? "";
+            var conversation = await db.Conversations.FindAsync(conversationId);
+            if (conversation is null || !conversation.Participants.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(username, StringComparer.OrdinalIgnoreCase)) return Results.Forbid();
+            await hub.Clients.Group($"conversation:{conversationId}").SendAsync("messages.read", new { conversationId, username, readAtUtc = DateTime.UtcNow });
+            return Results.Ok(new { conversationId, username });
+        }).RequireAuthorization();
     }
 }
 
