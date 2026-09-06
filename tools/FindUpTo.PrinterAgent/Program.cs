@@ -1,14 +1,20 @@
 using System.Printing;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:18991");
+var agentKey = Environment.GetEnvironmentVariable("FINDUPTO_PRINTER_AGENT_KEY");
+if (string.IsNullOrWhiteSpace(agentKey) || agentKey.Length < 32)
+    throw new InvalidOperationException("FINDUPTO_PRINTER_AGENT_KEY must be configured and at least 32 characters long.");
+
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "FindUpTo.PrinterAgent" }));
 
-app.MapGet("/printers", () => Results.Ok(PrinterService.Discover()));
+app.MapGet("/printers", () => Results.Ok(PrinterService.Discover()))
+   .RequireAgentKey(agentKey);
 
 app.MapPost("/print/raw", async (RawPrintRequest request) =>
 {
@@ -28,13 +34,30 @@ app.MapPost("/print/raw", async (RawPrintRequest request) =>
     {
         return Results.Problem($"Printer error: {ex.Message}", statusCode: 503);
     }
-});
+}).RequireAgentKey(agentKey);
 
 app.Run();
 
 public sealed record RawPrintRequest(string PrinterName, string DataBase64);
-
 public sealed record PrinterInfo(string Name, string Connection, bool Connected, string Kind, string? Port, string? Driver);
+
+static class AgentAuthExtensions
+{
+    public static RouteHandlerBuilder RequireAgentKey(this RouteHandlerBuilder endpoint, string expectedKey)
+    {
+        endpoint.AddEndpointFilter(async (context, next) =>
+        {
+            if (!context.HttpContext.Request.Headers.TryGetValue("X-FindUpTo-Agent-Key", out var provided))
+                return Results.Unauthorized();
+            var supplied = Encoding.UTF8.GetBytes(provided.ToString());
+            var expected = Encoding.UTF8.GetBytes(expectedKey);
+            return supplied.Length == expected.Length && CryptographicOperations.FixedTimeEquals(supplied, expected)
+                ? await next(context)
+                : Results.Unauthorized();
+        });
+        return endpoint;
+    }
+}
 
 static class PrinterService
 {
