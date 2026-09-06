@@ -44,7 +44,6 @@ public static class BackupEndpoints
                 try
                 {
                     var safety = await BackupService.CreateBackupAsync(db, env.ContentRootPath, ct);
-                    db.Database.GetDbConnection().Close();
                     await BackupService.RestoreAsync(temp, db, ct);
                     return Results.Ok(new { restoredFrom = Path.GetFileName(upload.FileName), safetyBackup = safety.Name, message = "Database restored. Restart the server before continuing to process transactions." });
                 }
