@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Models;
 using Microsoft.EntityFrameworkCore;
@@ -11,18 +12,60 @@ public static class SyncEndpoints
 
     public static void MapSyncEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/sync/pull", async (DateTime? since, CoreDbContext db, CancellationToken ct) =>
+        app.MapGet("/api/sync/pull", async (DateTime? since, ClaimsPrincipal user, CoreDbContext db, CancellationToken ct) =>
         {
+            var role = user.FindFirstValue(ClaimTypes.Role) ?? "";
+            var catalogRole = role is "Owner" or "Manager" or "Admin" or "Counter" or "Waiter";
+            var managementRole = role is "Owner" or "Manager" or "Admin" or "Counter";
             var watermark = since?.ToUniversalTime() ?? DateTime.MinValue;
-            var products = await db.Products.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.CategoryId, x.Name, x.Description, x.Price, x.ImageUrl, x.Barcode, x.Available, x.UpdatedAtUtc }).ToListAsync(ct);
-            var categories = await db.Categories.AsNoTracking().Select(x => new { x.Id, x.Name, x.Active, x.SortOrder }).ToListAsync(ct);
-            var promotions = await db.Promotions.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).ToListAsync(ct);
-            var tables = await db.Tables.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.Name, x.Capacity, x.Status, x.Active, x.UpdatedAtUtc }).ToListAsync(ct);
-            var orders = await db.Orders.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.CustomerId, x.TableId, x.CreatedByUsername, x.OrderType, x.Status, x.Subtotal, x.Tax, x.Total, x.Notes, x.CreatedAtUtc, x.UpdatedAtUtc, Items = x.Items.Select(i => new { i.Id, i.ProductId, i.ProductName, i.UnitPrice, i.Quantity, i.Notes, i.LineTotal }) }).ToListAsync(ct);
-            var payments = await db.Payments.AsNoTracking().Where(x => x.CreatedAtUtc > watermark).Select(x => new { x.Id, x.PosOrderId, x.AmountTendered, x.AmountPaid, x.ChangeAmount, x.Method, x.Status, x.Reference, x.CollectedByUsername, x.CreatedAtUtc }).ToListAsync(ct);
-            var customers = await db.Customers.AsNoTracking().Where(x => x.CreatedAtUtc > watermark).Select(x => new { x.Id, x.Name, x.Phone, x.Address, x.Notes, x.CreatedAtUtc }).ToListAsync(ct);
-            return Results.Ok(new { serverTimeUtc = DateTime.UtcNow, since = watermark, products, categories, promotions, tables, customers, orders, payments });
-        }).RequireAuthorization();
+
+            var products = catalogRole
+                ? await db.Products.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.CategoryId, x.Name, x.Description, x.Price, x.ImageUrl, x.Barcode, x.Available, x.UpdatedAtUtc }).ToListAsync(ct)
+                : [];
+            var categories = catalogRole
+                ? await db.Categories.AsNoTracking().Select(x => new { x.Id, x.Name, x.Active, x.SortOrder }).ToListAsync(ct)
+                : [];
+            var promotions = catalogRole
+                ? await db.Promotions.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).ToListAsync(ct)
+                : [];
+            var tables = catalogRole
+                ? await db.Tables.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark).Select(x => new { x.Id, x.Name, x.Capacity, x.Status, x.Active, x.UpdatedAtUtc }).ToListAsync(ct)
+                : [];
+
+            var orderQuery = db.Orders.AsNoTracking().Where(x => x.UpdatedAtUtc > watermark);
+            if (role == "Kitchen") orderQuery = orderQuery.Where(x => x.OrderType != "Delivery");
+            else if (role == "Rider") orderQuery = orderQuery.Where(x => x.OrderType == "Delivery");
+            else if (!catalogRole) orderQuery = orderQuery.Where(x => false);
+            var orders = await orderQuery
+                .Select(x => new { x.Id, x.CustomerId, x.TableId, x.CreatedByUsername, x.OrderType, x.Status, x.Subtotal, x.Tax, x.Total, x.Notes, x.CreatedAtUtc, x.UpdatedAtUtc, Items = x.Items.Select(i => new { i.Id, i.ProductId, i.ProductName, i.UnitPrice, i.Quantity, i.Notes, i.LineTotal }) })
+                .Take(500).ToListAsync(ct);
+
+            var payments = managementRole
+                ? await db.Payments.AsNoTracking().Where(x => x.CreatedAtUtc > watermark).Select(x => new { x.Id, x.PosOrderId, x.AmountTendered, x.AmountPaid, x.ChangeAmount, x.Method, x.Status, x.Reference, x.CollectedByUsername, x.CreatedAtUtc }).Take(500).ToListAsync(ct)
+                : [];
+
+            List<object> customers;
+            if (managementRole)
+            {
+                customers = (await db.Customers.AsNoTracking().Where(x => x.CreatedAtUtc > watermark)
+                    .Select(x => new { x.Id, x.Name, x.Phone, x.Address, x.Notes, x.CreatedAtUtc }).Take(500).ToListAsync(ct))
+                    .Cast<object>().ToList();
+            }
+            else if (role == "Rider")
+            {
+                var deliveryCustomerIds = await db.Orders.AsNoTracking().Where(x => x.OrderType == "Delivery" && x.CustomerId.HasValue)
+                    .Select(x => x.CustomerId!.Value).Distinct().ToListAsync(ct);
+                customers = (await db.Customers.AsNoTracking().Where(x => deliveryCustomerIds.Contains(x.Id))
+                    .Select(x => new { x.Id, x.Name, x.Phone, x.Address }).ToListAsync(ct))
+                    .Cast<object>().ToList();
+            }
+            else
+            {
+                customers = [];
+            }
+
+            return Results.Ok(new { serverTimeUtc = DateTime.UtcNow, since = watermark, role, products, categories, promotions, tables, customers, orders, payments });
+        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter", "Waiter", "Kitchen", "Rider"));
 
         app.MapGet("/api/sync/conflicts", async (CoreDbContext db, CancellationToken ct) => Results.Ok(await db.SyncConflicts.AsNoTracking().OrderByDescending(x => x.CreatedAtUtc).Take(200).ToListAsync(ct)))
             .RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
