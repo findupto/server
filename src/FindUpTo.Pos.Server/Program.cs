@@ -130,8 +130,6 @@ app.MapNotificationEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
-public partial class Program { }
-
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
 {
     if (!await db.BusinessSettings.AnyAsync())
@@ -171,3 +169,5 @@ static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
 
     await db.SaveChangesAsync();
 }
+
+public partial class Program { }
