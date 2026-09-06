@@ -30,9 +30,9 @@ public static class AiEndpoints
 
         app.MapGet("/api/ai/customers/retention", async (CoreDbContext db, int? days, CancellationToken cancellationToken) =>
         {
-            var lookback = Math.Clamp(days ?? 90, 30, 730); var now = DateTime.UtcNow; var from = now.AddDays(-lookback);
+            var lookback = Math.Clamp(days ?? 90, 30, 730); var now = DateTime.UtcNow; var fromDate = now.AddDays(-lookback);
             var customers = await db.Customers.AsNoTracking().ToListAsync(cancellationToken);
-            var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= from && x.Status != "Cancelled").ToListAsync(cancellationToken);
+            var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= fromDate && x.Status != "Cancelled").ToListAsync(cancellationToken);
             var result = customers.Select(c =>
             {
                 var customerOrders = orders.Where(x => x.CustomerId == c.Id).OrderByDescending(x => x.CreatedAtUtc).ToList();
@@ -49,8 +49,8 @@ public static class AiEndpoints
 
         app.MapGet("/api/ai/customers/summary", async (CoreDbContext db, CancellationToken cancellationToken) =>
         {
-            var now = DateTime.UtcNow; var from = now.AddDays(-90);
-            var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= from && x.Status != "Cancelled").ToListAsync(cancellationToken);
+            var now = DateTime.UtcNow; var fromDate = now.AddDays(-90);
+            var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= fromDate && x.Status != "Cancelled").ToListAsync(cancellationToken);
             var active = orders.Select(x => x.CustomerId!.Value).Distinct().Count(); var repeat = orders.GroupBy(x => x.CustomerId!.Value).Count(g => g.Count() >= 2);
             var atRisk = orders.GroupBy(x => x.CustomerId!.Value).Count(g => (now - g.Max(x => x.CreatedAtUtc)).TotalDays >= 45);
             return Results.Ok(new { generatedAtUtc = now, lookbackDays = 90, activeCustomers = active, repeatCustomers = repeat, repeatRate = active == 0 ? 0m : Math.Round(repeat / (decimal)active, 3), customersAtRisk = atRisk });
@@ -81,13 +81,12 @@ public static class AiEndpoints
 
     private static async Task<object> GetInventoryForecastAsync(CoreDbContext db, int horizon, CancellationToken ct)
     {
-        var now = DateTime.UtcNow; var from = now.AddDays(-Math.Max(30, horizon));
+        var now = DateTime.UtcNow; var fromDate = now.AddDays(-Math.Max(30, horizon));
         var products = await db.Products.AsNoTracking().Where(x => x.Available).ToListAsync(ct);
         var inventory = await db.ProductInventories.AsNoTracking().ToDictionaryAsync(x => x.ProductId, ct);
         var sales = await (from item in db.OrderItems.AsNoTracking()
                            join order in db.Orders.AsNoTracking() on item.PosOrderId equals order.Id
-                           where order.CreatedAtUtc >= from
-                           where order.Status != "Cancelled"
+                           where order.CreatedAtUtc >= fromDate && order.Status != "Cancelled"
                            group item by item.ProductId into g
                            select new { productId = g.Key, units = g.Sum(x => x.Quantity) }).ToDictionaryAsync(x => x.productId, ct);
         var items = products.Select(p =>
