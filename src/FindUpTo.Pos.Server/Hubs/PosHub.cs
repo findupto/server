@@ -10,7 +10,7 @@ namespace FindUpTo.Pos.Server.Hubs;
 public sealed class PosHub(CoreDbContext db) : Hub
 {
     public async Task JoinRoleGroup(){var role=Context.User?.FindFirstValue(ClaimTypes.Role);if(!string.IsNullOrWhiteSpace(role))await Groups.AddToGroupAsync(Context.ConnectionId,$"role:{role}");}
-    public async Task JoinUserGroup(){if(!string.IsNullOrWhiteSpace(Context.UserIdentifier))await Groups.AddToGroupAsync(Context.ConnectionId,$"user:{Context.UserIdentifier}");}
+    public async Task JoinUserGroup(){var username=Context.User?.Identity?.Name;if(!string.IsNullOrWhiteSpace(username))await Groups.AddToGroupAsync(Context.ConnectionId,$"user:{username}");}
     public async Task JoinDeviceGroup(){var id=Context.User?.FindFirstValue("device_id");if(Context.User?.IsInRole("Device")==true&&int.TryParse(id,out var deviceId))await Groups.AddToGroupAsync(Context.ConnectionId,$"device:{deviceId}");}
     public async Task JoinTrackingGroup(string trackingCode)
     {
