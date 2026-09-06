@@ -72,6 +72,21 @@ public sealed class Payment
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
+public sealed class Promotion
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string DiscountType { get; set; } = "Percent";
+    public decimal Value { get; set; }
+    public bool Active { get; set; } = true;
+    public DateTime? StartsAtUtc { get; set; }
+    public DateTime? EndsAtUtc { get; set; }
+    public int? ProductId { get; set; }
+    public int? CategoryId { get; set; }
+    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
 public sealed record CategoryRequest(string Name, int SortOrder = 0);
 public sealed record ProductRequest(int CategoryId, string Name, string Description, decimal Price, string ImageUrl, bool Available = true);
 public sealed record CustomerRequest(string Name, string Phone, string Address, string Notes);
@@ -79,3 +94,4 @@ public sealed record OrderItemRequest(int ProductId, int Quantity, string Notes 
 public sealed record CreateOrderRequest(int? CustomerId, string OrderType, List<OrderItemRequest> Items, string Notes = "");
 public sealed record UpdateOrderStatusRequest(string Status);
 public sealed record CollectPaymentRequest(decimal AmountTendered, string Method = "Cash", string Reference = "");
+public sealed record PromotionRequest(string Name, string Description, string DiscountType, decimal Value, bool Active = true, DateTime? StartsAtUtc = null, DateTime? EndsAtUtc = null, int? ProductId = null, int? CategoryId = null);
