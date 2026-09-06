@@ -16,7 +16,7 @@ public sealed class AnomalyAiService(CoreDbContext db)
             .Where(x => x.CreatedAtUtc >= from).ToListAsync(cancellationToken);
 
         var daily = orders.GroupBy(x => x.CreatedAtUtc.Date).Select(g => new { day = g.Key, orders = g.Count(), revenue = g.Where(x => x.Status != "Cancelled").Sum(x => x.Total) }).ToList();
-        var avgOrders = daily.Count == 0 ? 0m : daily.Average(x => x.orders);
+        var avgOrders = daily.Count == 0 ? 0m : (decimal)daily.Average(x => x.orders);
         var avgRevenue = daily.Count == 0 ? 0m : daily.Average(x => x.revenue);
         var alerts = new List<object>();
 
