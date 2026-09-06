@@ -6,6 +6,7 @@ using FindUpTo.Pos.Server.Hubs;
 using FindUpTo.Pos.Server.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -166,7 +167,7 @@ app.Run();
 
 static async Task NotifyOrder(WebApplication app, PosOrder order)
 {
-    var hub = app.Services.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<PosHub>>();
+    var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
     await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
 }
 
