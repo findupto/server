@@ -76,7 +76,7 @@ public static class WorkflowEndpoints
             return Results.Ok(await q.OrderByDescending(x => x.CreatedAtUtc).Take(500).ToListAsync());
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter", "Waiter", "Kitchen", "Rider"));
 
-        app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub) =>
+        app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub, InventoryService inventory) =>
         {
             var allowed = new[] { "New", "Accepted", "Preparing", "Ready", "Served", "OutForDelivery", "Completed", "Cancelled" };
             if (!allowed.Contains(input.Status, StringComparer.OrdinalIgnoreCase)) return Results.BadRequest("Invalid order status.");
@@ -84,10 +84,20 @@ public static class WorkflowEndpoints
             var next = allowed.First(x => x.Equals(input.Status, StringComparison.OrdinalIgnoreCase));
             if (next == "Completed" && order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase) && !order.Status.Equals("OutForDelivery", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Delivery orders must be out for delivery before completion.");
             if (next == "OutForDelivery" && (!order.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase) || !order.Status.Equals("Ready", StringComparison.OrdinalIgnoreCase))) return Results.BadRequest("Only ready delivery orders can go out for delivery.");
+            if (next == "Cancelled" && order.Status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Order is already cancelled.");
+            await using var tx = next == "Cancelled" ? await db.Database.BeginTransactionAsync() : null;
+            IReadOnlyList<int> restoredProducts = [];
+            if (next == "Cancelled") restoredProducts = await inventory.RestoreForCancellationAsync(order, user.Identity?.Name ?? "unknown");
             order.Status = next; order.UpdatedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync();
+            if (tx is not null) await tx.CommitAsync();
             await AuditEndpoints.WriteAsync(db, user, "StatusChanged", "Order", order.Id.ToString(), $"Status={order.Status}");
             await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
+            foreach (var productId in restoredProducts)
+            {
+                var stock = await db.ProductInventories.AsNoTracking().SingleAsync(x => x.ProductId == productId);
+                await hub.Clients.All.SendAsync("inventory.updated", new { productId, quantityOnHand = stock.QuantityOnHand, reorderLevel = stock.ReorderLevel, trackInventory = stock.TrackInventory, updatedAtUtc = stock.UpdatedAtUtc });
+            }
             return Results.Ok(order);
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter", "Waiter", "Kitchen", "Rider"));
 
