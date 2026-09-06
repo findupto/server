@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Models;
@@ -15,8 +16,9 @@ public static class NotificationEndpoints
             if (string.IsNullOrWhiteSpace(input.Token) || input.Token.Length > 4096) return Results.BadRequest("A valid push token is required.");
             var platform = input.Platform.Trim().ToLowerInvariant();
             if (platform is not ("android" or "ios" or "windows")) return Results.BadRequest("Platform must be android, ios, or windows.");
-            var device = await db.PushDevices.SingleOrDefaultAsync(x => x.Username == username && x.Token == input.Token, ct);
-            if (device is null) db.PushDevices.Add(new PushDevice { Username = username, Platform = platform, Token = input.Token.Trim() });
+            var token = input.Token.Trim();
+            var device = await db.PushDevices.SingleOrDefaultAsync(x => x.Username == username && x.Token == token, ct);
+            if (device is null) db.PushDevices.Add(new PushDevice { Username = username, Platform = platform, Token = token });
             else { device.Platform = platform; device.Active = true; device.UpdatedAtUtc = DateTime.UtcNow; }
             await db.SaveChangesAsync(ct); return Results.Ok(new { registered = true });
         }).RequireAuthorization();
@@ -38,11 +40,11 @@ public static class NotificationEndpoints
         {
             if (string.IsNullOrWhiteSpace(input.Username) || string.IsNullOrWhiteSpace(input.Title) || string.IsNullOrWhiteSpace(input.Body)) return Results.BadRequest("Username, title and body are required.");
             if (input.Title.Length > 160 || input.Body.Length > 1000) return Results.BadRequest("Notification text is too long.");
-            var target = await db.Users.AsNoTracking().AnyAsync(x => x.Username == input.Username && x.Active, ct);
-            if (!target) return Results.NotFound("User not found.");
+            var username = input.Username.Trim();
+            if (!await db.Users.AsNoTracking().AnyAsync(x => x.Username == username && x.Active, ct)) return Results.NotFound("User not found.");
             var data = input.Data is null ? "{}" : JsonSerializer.Serialize(input.Data);
             if (data.Length > 4000) return Results.BadRequest("Notification data is too large.");
-            var item = new NotificationMessage { Username = input.Username.Trim(), Title = input.Title.Trim(), Body = input.Body.Trim(), DataJson = data };
+            var item = new NotificationMessage { Username = username, Title = input.Title.Trim(), Body = input.Body.Trim(), DataJson = data };
             db.Notifications.Add(item); await db.SaveChangesAsync(ct);
             await AuditEndpoints.WriteAsync(db, user, "Queued", "Notification", item.Id.ToString(), $"To={item.Username}");
             return Results.Accepted($"/api/notifications/{item.Id}", new { item.Id, item.Status });
