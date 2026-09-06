@@ -32,7 +32,24 @@ FindUpTo POS is a local-first restaurant point-of-sale platform. A Windows PC ho
 - Windows service hosting support
 - Swagger/OpenAPI in development
 - Health endpoint
-- Login rate limiting
+- **AI Business Operator with live POS tool execution**
+
+### AI Business Operator
+Owner, Manager, Admin and Counter users can open the AI Operator from the staff dashboard and give natural-language commands. The AI uses authenticated server-side tools rather than pretending to perform actions.
+
+Supported live operations include:
+- Search products and read live stock/cost information
+- Create sales and optionally collect Cash/Card/Online payments
+- Automatically deduct tracked inventory during AI-created sales
+- Add stock or set exact stock quantities
+- Update product price, availability and barcode
+- Read low-stock alerts and sales/payment reports
+- Create purchase orders from existing suppliers
+- Receive purchase orders and update inventory weighted average cost
+- Return printable receipt URLs for completed sales
+- Role-aware authorization and audit entries for AI mutations
+
+AI is implemented with the OpenAI Responses API and function calling. The server keeps the API key server-side and uses `store=false` for response calls. Configure `OPENAI_API_KEY` and optionally `OPENAI_MODEL` (defaults to `gpt-5`). OpenAI's Responses API supports custom function tools for calling application functions, which is the mechanism used here. urlOpenAI Responses API documentationhttps://platform.openai.com/docs/api-reference/responses
 
 ### Flutter
 - Customer catalog, promotions, checkout and order history
@@ -46,6 +63,7 @@ FindUpTo POS is a local-first restaurant point-of-sale platform. A Windows PC ho
 - Receipt reprint action
 - Kitchen, waiter and rider workflow foundations
 - Product management
+- **AI Operator screen for Owner/Manager/Admin/Counter**
 - Secure JWT storage
 - SignalR client integration
 - Windows desktop Flutter target
@@ -55,6 +73,32 @@ FindUpTo POS is a local-first restaurant point-of-sale platform. A Windows PC ho
 - Windows service installation script
 - `BUILD.bat` for restore/build/test/server publish/Flutter APK/Flutter Windows packaging
 - Detailed mobile/desktop connection guide in `docs/SETUP.md`
+
+## AI configuration
+
+Before starting the server, configure:
+
+```bat
+set OPENAI_API_KEY=your-server-side-openai-api-key
+set OPENAI_MODEL=gpt-5
+```
+
+The key must never be placed in Flutter code, committed to Git, or exposed to POS clients. AI actions are still enforced by server-side role checks; the model cannot bypass authorization.
+
+AI endpoint:
+
+```text
+POST /api/ai/operate
+GET  /api/ai/status
+```
+
+Example command:
+
+```text
+Sell 2 Zinger Burger and 1 Coke for cash. Customer paid Rs. 1000.
+```
+
+The assistant resolves the products, creates the real POS order, deducts tracked stock, records payment/change, audits the operation and returns the receipt URL.
 
 ## Important production gaps
 
@@ -66,6 +110,7 @@ The repository contains foundations for several advanced integrations, but these
 - Windows printer-agent A4 rendering and authenticated local-agent routing require final hardware/driver validation on the target Windows machines.
 - Remote relay is designed for outbound connectivity but should be deployed behind appropriate network policy and monitoring rather than exposing the POS API directly to the public internet.
 - SQLite restore should be performed while POS activity is stopped and followed by a restart/verification.
+- AI production readiness requires an active OpenAI API key, billing/limits, monitoring and operational policy for autonomous financial actions. Role checks remain mandatory.
 
 These are explicit engineering boundaries, not fake feature claims.
 
@@ -77,17 +122,18 @@ These are explicit engineering boundaries, not fake feature claims.
        HTTP + JWT
        SignalR WS
           |
- +--------+------------------+
- | Windows POS Server        |
- | ASP.NET Core 8            |
- | RBAC / Orders / Payments  |
- | Reports / Audit / Sync    |
- | Printer / Relay services  |
- +------------+--------------+
-              |
-           SQLite
-              |
-       local backups
+ +--------+---------------------------+
+ | Windows POS Server                 |
+ | ASP.NET Core 8                     |
+ | RBAC / Orders / Payments           |
+ | Reports / Audit / Sync             |
+ | AI Operator / Tool Execution       |
+ | Printer / Relay services           |
+ +----------------+------------------+
+                  |
+               SQLite
+                  |
+            local backups
 
  Local Windows devices:
    USB/Bluetooth/LAN printers
@@ -101,7 +147,7 @@ Clients never access SQLite directly. The server validates every protected opera
 
 ```text
 server/
-├── src/FindUpTo.Pos.Server/       # ASP.NET Core API
+├── src/FindUpTo.Pos.Server/       # ASP.NET Core API + AI operator
 ├── mobile/flutter_app/             # Flutter Android/Windows client
 ├── tools/FindUpTo.PrinterAgent/    # Windows local printer integration
 ├── deploy/windows/                 # Windows publish/service scripts
@@ -127,6 +173,8 @@ set INITIAL_OWNER_PASSWORD=strong-owner-password
 set INITIAL_ADMIN_PASSWORD=strong-admin-password
 set INITIAL_WAITER_PASSWORD=strong-waiter-password
 set INITIAL_COUNTER_PASSWORD=strong-counter-password
+set OPENAI_API_KEY=your-server-side-openai-api-key
+set OPENAI_MODEL=gpt-5
 ```
 
 Optional first-run business settings:
@@ -173,17 +221,19 @@ For an Android emulator use `http://10.0.2.2:5000`. For a physical phone use the
 
 1. Never commit JWT signing keys, passwords, API secrets or printer-agent secrets.
 2. `POS_JWT_KEY` must be at least 32 characters; use a randomly generated secret in production.
-3. Initial staff passwords are read from environment variables and are never seeded from hardcoded source passwords.
-4. Mobile/desktop clients never connect directly to SQLite.
-5. Server-side authorization is mandatory; hiding a UI button is not a permission boundary.
-6. Do not expose the POS API or SQLite database directly to the public internet.
-7. Restrict Windows Firewall access to the private LAN where possible.
-8. Treat backups as sensitive business data and protect them accordingly.
-9. Test restore procedures on a separate machine before relying on them for disaster recovery.
+3. `OPENAI_API_KEY` is a server secret and must never be shipped to Flutter clients.
+4. Initial staff passwords are read from environment variables and are never seeded from hardcoded source passwords.
+5. Mobile/desktop clients never connect directly to SQLite.
+6. Server-side authorization is mandatory; hiding a UI button is not a permission boundary.
+7. AI tool execution is subject to the authenticated user's server role.
+8. Do not expose the POS API or SQLite database directly to the public internet.
+9. Restrict Windows Firewall access to the private LAN where possible.
+10. Treat backups as sensitive business data and protect them accordingly.
+11. Test restore procedures on a separate machine before relying on them for disaster recovery.
 
 ## Reference projects researched for architecture ideas
 
-The implementation direction follows patterns seen in mature/open-source POS projects: local-first operation, queued offline actions, printer abstraction, role-based workflows, auditability, backups and feature-first client structure. Useful references include Flutter POS examples with offline queues and printer support, and offline restaurant POS projects with SQLite, KDS and operational tooling. urlFlutter POS reference projecthttps://github.com/elrizwiraswara/flutter_pos urlFloCafe reference projecthttps://github.com/FreeOpenSourcePOS/FloCafe urlBayaa POS reference projecthttps://github.com/Desha29/Bayaa
+The implementation direction follows patterns seen in mature/open-source POS projects: local-first operation, queued offline actions, printer abstraction, role-based workflows, auditability, backups, KDS-oriented operations and feature-first client structure. FloCafe emphasizes offline-first restaurant operation, printing, KDS and local SQLite; DearPOS emphasizes self-hosted/offline workflows; Tavo POS documents offline order queues and receipt/KDS printing; ElitaleRestro adds recipe-aware inventory and KDS workflows. citeturn0search0turn0search1turn0search2turn0search4
 
 ## License
 
