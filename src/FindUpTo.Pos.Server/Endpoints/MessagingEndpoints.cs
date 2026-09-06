@@ -48,8 +48,6 @@ public static class MessagingEndpoints
             await hub.Clients.Group($"conversation:{conversationId}").SendAsync("message.created", message);
             return Results.Created($"/api/messages/{conversationId}", message);
         }).RequireAuthorization();
-
-        app.MapHub<PosHub>("/hubs/pos");
     }
 }
 
