@@ -19,6 +19,7 @@ var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Sourc
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
 builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
 builder.Services.AddScoped<PromotionPricingService>();
+builder.Services.AddScoped<InventoryService>();
 builder.Services.AddHostedService<AutomaticBackupHostedService>();
 builder.Services.AddHostedService<SyncSchemaHostedService>();
 builder.Services.AddHostedService<PushNotificationHostedService>();
