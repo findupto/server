@@ -22,7 +22,7 @@ public static class AiEndpoints
         app.MapGet("/api/ai/status", async (AiProviderService providers, CancellationToken cancellationToken) =>
         {
             var provider = await providers.ResolveAsync(cancellationToken);
-            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking" } });
+            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta" } });
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
 
         app.MapGet("/api/ai/providers/discover", async (AiProviderService providers, CancellationToken cancellationToken) => Results.Ok(await providers.DiscoverAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
@@ -30,14 +30,14 @@ public static class AiEndpoints
         app.MapPut("/api/ai/configuration", async (AiConfigurationRequest input, ClaimsPrincipal user, AiProviderService providers, CancellationToken cancellationToken) =>
         {
             if (user.FindFirstValue(ClaimTypes.Role) != "Owner") return Results.Forbid();
+            var provider = input.Provider.Trim().ToLowerInvariant();
             var allowed = new[] { "auto", "openai", "ollama", "lmstudio", "llamacpp" };
-            if (!allowed.Contains(input.Provider.Trim().ToLowerInvariant())) return Results.BadRequest("Unsupported AI provider.");
-            if (input.Provider.Equals("openai", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(input.ApiKey)) return Results.BadRequest("API key is required for a purchased OpenAI model.");
-            await providers.ConfigureAsync(input.Provider, input.Model ?? "", input.ApiKey, input.BaseUrl, cancellationToken);
+            if (!allowed.Contains(provider)) return Results.BadRequest("Unsupported AI provider.");
+            if (provider == "openai" && string.IsNullOrWhiteSpace(input.ApiKey)) return Results.BadRequest("API key is required for a purchased OpenAI model.");
+            if (provider is "ollama" or "lmstudio" or "llamacpp" && string.IsNullOrWhiteSpace(input.Model)) return Results.BadRequest("A local model name is required.");
+            await providers.ConfigureAsync(provider, input.Model ?? "", input.ApiKey, input.BaseUrl, cancellationToken);
             return Results.Ok(new { success = true, message = "AI configuration saved. API keys are never returned by this endpoint." });
         }).RequireAuthorization(p => p.RequireRole("Owner"));
-
-        app.MapDeliveryEndpoints();
     }
 
     public sealed record AiOperateRequest(string Message);
