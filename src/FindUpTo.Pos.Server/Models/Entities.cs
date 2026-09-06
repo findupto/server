@@ -19,6 +19,10 @@ public sealed class BusinessSetting
     public decimal TaxPercent { get; set; }
     public string CurrencyCode { get; set; } = "PKR";
     public string CurrencySymbol { get; set; } = "Rs.";
+    public string AiProvider { get; set; } = "auto";
+    public string AiModel { get; set; } = "";
+    public string AiBaseUrl { get; set; } = "";
+    public string AiApiKeyEncrypted { get; set; } = "";
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
