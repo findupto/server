@@ -153,6 +153,7 @@ app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequ
 
 app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
+app.MapMessagingEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
