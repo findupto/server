@@ -1,52 +1,13 @@
 using FindUpTo.Pos.Server.Data;
 using Microsoft.EntityFrameworkCore;
-
 namespace FindUpTo.Pos.Server.Endpoints;
-
 public static class ReportEndpoints
 {
-    public static void MapReportEndpoints(this WebApplication app)
-    {
-        app.MapGet("/api/reports/sales", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) =>
-        {
-            var from = fromUtc ?? DateTime.UtcNow.Date;
-            var to = toUtc ?? DateTime.UtcNow;
-            if (to < from) return Results.BadRequest("toUtc must be greater than or equal to fromUtc.");
-
-            var orders = await db.Orders.AsNoTracking()
-                .Where(x => x.CreatedAtUtc >= from && x.CreatedAtUtc <= to && x.Status != "Cancelled")
-                .ToListAsync();
-            var payments = await db.Payments.AsNoTracking()
-                .Where(x => x.CreatedAtUtc >= from && x.CreatedAtUtc <= to && x.Status == "Paid")
-                .ToListAsync();
-
-            return Results.Ok(new
-            {
-                fromUtc = from,
-                toUtc = to,
-                orderCount = orders.Count,
-                subtotal = orders.Sum(x => x.Subtotal),
-                tax = orders.Sum(x => x.Tax),
-                grossSales = orders.Sum(x => x.Total),
-                paidAmount = payments.Sum(x => x.AmountPaid),
-                paymentsByMethod = payments.GroupBy(x => x.Method).Select(g => new { method = g.Key, amount = g.Sum(x => x.AmountPaid), count = g.Count() }).OrderByDescending(x => x.amount)
-            });
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-
-        app.MapGet("/api/reports/products", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) =>
-        {
-            var from = fromUtc ?? DateTime.UtcNow.Date;
-            var to = toUtc ?? DateTime.UtcNow;
-            if (to < from) return Results.BadRequest("toUtc must be greater than or equal to fromUtc.");
-
-            var rows = await db.OrderItems.AsNoTracking()
-                .Where(x => x.PosOrderId > 0 && db.Orders.Any(o => o.Id == x.PosOrderId && o.CreatedAtUtc >= from && o.CreatedAtUtc <= to && o.Status != "Cancelled"))
-                .GroupBy(x => new { x.ProductId, x.ProductName })
-                .Select(g => new { productId = g.Key.ProductId, productName = g.Key.ProductName, quantity = g.Sum(x => x.Quantity), sales = g.Sum(x => x.LineTotal) })
-                .OrderByDescending(x => x.sales)
-                .Take(100)
-                .ToListAsync();
-            return Results.Ok(rows);
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-    }
+ public static void MapReportEndpoints(this WebApplication app)
+ {
+  app.MapGet("/api/reports/sales", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) => { var from=fromUtc??DateTime.UtcNow.Date; var to=toUtc??DateTime.UtcNow; if(to<from)return Results.BadRequest("toUtc must be greater than or equal to fromUtc."); var orders=await db.Orders.AsNoTracking().Where(x=>x.CreatedAtUtc>=from&&x.CreatedAtUtc<=to&&x.Status!="Cancelled").ToListAsync(); var payments=await db.Payments.AsNoTracking().Where(x=>x.CreatedAtUtc>=from&&x.CreatedAtUtc<=to&&x.Status=="Paid").ToListAsync(); return Results.Ok(new {fromUtc=from,toUtc=to,orderCount=orders.Count,subtotal=orders.Sum(x=>x.Subtotal),tax=orders.Sum(x=>x.Tax),grossSales=orders.Sum(x=>x.Total),paidAmount=payments.Sum(x=>x.AmountPaid),paymentsByMethod=payments.GroupBy(x=>x.Method).Select(g=>new {method=g.Key,amount=g.Sum(x=>x.AmountPaid),count=g.Count()}).OrderByDescending(x=>x.amount)}); }).RequireAuthorization(p=>p.RequireRole("Owner","Manager","Admin"));
+  app.MapGet("/api/reports/products", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) => { var from=fromUtc??DateTime.UtcNow.Date; var to=toUtc??DateTime.UtcNow; if(to<from)return Results.BadRequest("toUtc must be greater than or equal to fromUtc."); var rows=await db.OrderItems.AsNoTracking().Where(x=>db.Orders.Any(o=>o.Id==x.PosOrderId&&o.CreatedAtUtc>=from&&o.CreatedAtUtc<=to&&o.Status!="Cancelled")).GroupBy(x=>new{x.ProductId,x.ProductName}).Select(g=>new{productId=g.Key.ProductId,productName=g.Key.ProductName,quantity=g.Sum(x=>x.Quantity),sales=g.Sum(x=>x.LineTotal)}).OrderByDescending(x=>x.sales).Take(100).ToListAsync(); return Results.Ok(rows); }).RequireAuthorization(p=>p.RequireRole("Owner","Manager","Admin"));
+  app.MapGet("/api/reports/purchasing", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) => { var from=fromUtc??DateTime.UtcNow.Date; var to=toUtc??DateTime.UtcNow; if(to<from)return Results.BadRequest("toUtc must be greater than or equal to fromUtc."); var items=await db.PurchaseOrderItems.AsNoTracking().Where(x=>db.PurchaseOrders.Any(o=>o.Id==x.PurchaseOrderId&&o.CreatedAtUtc>=from&&o.CreatedAtUtc<=to)).ToListAsync(); var rows=items.GroupBy(x=>x.ProductId).Select(g=>new{productId=g.Key,productName=g.First().ProductName,quantityOrdered=g.Sum(x=>x.QuantityOrdered),quantityReceived=g.Sum(x=>x.QuantityReceived),spend=Math.Round(g.Sum(x=>x.QuantityReceived*x.UnitCost),2)}).OrderByDescending(x=>x.spend).Take(500).ToList(); return Results.Ok(new{fromUtc=from,toUtc=to,purchaseOrderCount=await db.PurchaseOrders.CountAsync(x=>x.CreatedAtUtc>=from&&x.CreatedAtUtc<=to),totalSpend=Math.Round(rows.Sum(x=>x.spend),2),rows}); }).RequireAuthorization(p=>p.RequireRole("Owner","Manager","Admin"));
+  app.MapGet("/api/reports/profit", async (CoreDbContext db, DateTime? fromUtc, DateTime? toUtc) => { var from=fromUtc??DateTime.UtcNow.Date; var to=toUtc??DateTime.UtcNow; if(to<from)return Results.BadRequest("toUtc must be greater than or equal to fromUtc."); var lines=await db.OrderItems.AsNoTracking().Where(x=>db.Orders.Any(o=>o.Id==x.PosOrderId&&o.CreatedAtUtc>=from&&o.CreatedAtUtc<=to&&o.Status!="Cancelled")).ToListAsync(); var inv=await db.ProductInventories.AsNoTracking().ToDictionaryAsync(x=>x.ProductId); var rows=lines.GroupBy(x=>new{x.ProductId,x.ProductName}).Select(g=>{var revenue=g.Sum(x=>x.LineTotal);var quantity=g.Sum(x=>x.Quantity);var cost=inv.TryGetValue(g.Key.ProductId,out var i)?quantity*i.AverageCost:0m;return new{productId=g.Key.ProductId,productName=g.Key.ProductName,quantity,revenue=Math.Round(revenue,2),estimatedCost=Math.Round(cost,2),grossProfit=Math.Round(revenue-cost,2),marginPercent=revenue==0?0m:Math.Round((revenue-cost)/revenue*100m,2)};}).OrderByDescending(x=>x.revenue).Take(500).ToList(); var revenueTotal=rows.Sum(x=>x.revenue);var costTotal=rows.Sum(x=>x.estimatedCost);return Results.Ok(new{fromUtc=from,toUtc=to,revenue=Math.Round(revenueTotal,2),estimatedCost=Math.Round(costTotal,2),grossProfit=Math.Round(revenueTotal-costTotal,2),marginPercent=revenueTotal==0?0m:Math.Round((revenueTotal-costTotal)/revenueTotal*100m,2),products=rows}); }).RequireAuthorization(p=>p.RequireRole("Owner","Manager","Admin"));
+ }
 }
