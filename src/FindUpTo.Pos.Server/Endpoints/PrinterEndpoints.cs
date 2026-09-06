@@ -24,8 +24,8 @@ public static class PrinterEndpoints
             if (string.IsNullOrWhiteSpace(input.DocumentType)) return Results.BadRequest(new { message = "DocumentType is required." });
             var printers = await DiscoverNetworkAsync(ct);
             var wantReceipt = input.DocumentType.Equals("Receipt", StringComparison.OrdinalIgnoreCase);
-            var selected = printers.Where(x => x.Connected && (wantReceipt ? x.Kind == "Thermal80mm" : x.Kind == "A4")).FirstOrDefault();
-            return selected is null ? Results.NotFound(new { message = "No suitable connected printer was discovered." }) : Results.Ok(selected);
+            var selected = printers.FirstOrDefault(x => x.Connected && (wantReceipt ? x.Kind == "Thermal80mm" : x.Kind == "A4"));
+            return selected is null ? Results.NotFound(new { message = "No suitable connected printer is configured/discovered." }) : Results.Ok(selected);
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
         app.MapPost("/api/printers/print-receipt/{id:int}", async (int id, CoreDbContext db, ClaimsPrincipal user, CancellationToken ct) =>
@@ -72,14 +72,16 @@ public static class PrinterEndpoints
         var result = new List<PrinterInfo>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var configured in (Environment.GetEnvironmentVariable("POS_PRINTER_IPS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (IPAddress.TryParse(configured, out var address) && address.AddressFamily == AddressFamily.InterNetwork) await ProbeAsync(address, result, seen, ct);
-        }
-        foreach (var ip in LocalSubnetCandidates()) { ct.ThrowIfCancellationRequested(); await ProbeAsync(ip, result, seen, ct); }
+            if (IPAddress.TryParse(configured, out var address) && address.AddressFamily == AddressFamily.InterNetwork)
+                await ProbeAsync(address, result, seen, ct, "Thermal80mm");
+        foreach (var configured in (Environment.GetEnvironmentVariable("POS_A4_PRINTER_IPS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (IPAddress.TryParse(configured, out var address) && address.AddressFamily == AddressFamily.InterNetwork)
+                await ProbeAsync(address, result, seen, ct, "A4");
+        foreach (var ip in LocalSubnetCandidates()) { ct.ThrowIfCancellationRequested(); await ProbeAsync(ip, result, seen, ct, "Thermal80mm"); }
         return result;
     }
 
-    private static async Task ProbeAsync(IPAddress ip, List<PrinterInfo> result, HashSet<string> seen, CancellationToken ct)
+    private static async Task ProbeAsync(IPAddress ip, List<PrinterInfo> result, HashSet<string> seen, CancellationToken ct, string kind)
     {
         if (!seen.Add(ip.ToString())) return;
         using var client = new TcpClient();
@@ -88,7 +90,7 @@ public static class PrinterEndpoints
         try
         {
             await client.ConnectAsync(ip, 9100, timeout.Token);
-            result.Add(new PrinterInfo($"Network raw printer {ip}", "Network TCP/9100", ip.ToString(), true, "Thermal80mm"));
+            result.Add(new PrinterInfo($"Network raw printer {ip}", "Network TCP/9100", ip.ToString(), true, kind));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
         catch (SocketException) { }
