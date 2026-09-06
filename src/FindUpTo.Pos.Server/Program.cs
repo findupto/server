@@ -17,6 +17,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.ConfigurePosWindowsService();
 var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Source=pos.db";
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
+builder.Services.AddDataProtection();
 builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
 builder.Services.AddHttpClient("business-ai", client => { client.Timeout = TimeSpan.FromSeconds(90); client.DefaultRequestHeaders.UserAgent.ParseAdd("FindUpTo-POS-AI/1.0"); });
 builder.Services.AddScoped<BusinessAiService>(); builder.Services.AddScoped<AiProviderService>();
