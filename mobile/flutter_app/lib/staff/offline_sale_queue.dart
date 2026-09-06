@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../core/api_client.dart';
 
@@ -12,9 +14,11 @@ class OfflineSaleQueue {
   static const _table = 'offline_sales';
 
   Database? _db;
+  bool _factoryInitialized = false;
 
   Future<Database> get _database async {
     if (_db != null) return _db!;
+    _initializeDatabaseFactory();
     final path = p.join(await getDatabasesPath(), _dbName);
     _db = await openDatabase(
       path,
@@ -36,6 +40,15 @@ class OfflineSaleQueue {
     );
     await _migrateLegacyQueue(_db!);
     return _db!;
+  }
+
+  void _initializeDatabaseFactory() {
+    if (_factoryInitialized) return;
+    _factoryInitialized = true;
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
   }
 
   Future<void> _migrateLegacyQueue(Database db) async {
@@ -63,7 +76,7 @@ class OfflineSaleQueue {
             conflictAlgorithm: ConflictAlgorithm.ignore,
           );
         } catch (_) {
-          // Ignore one corrupt legacy entry; valid queued sales must still migrate.
+          // One corrupt legacy entry must not block valid queued sales.
         }
       }
     });
@@ -78,9 +91,11 @@ class OfflineSaleQueue {
       whereArgs: ['pending'],
       orderBy: 'created_at ASC',
     );
-    return rows
-        .map((row) => Map<String, dynamic>.from(jsonDecode(row['payload']! as String) as Map))
-        .toList();
+    return rows.map((row) {
+      final payload = row['payload'];
+      if (payload is! String) throw StateError('Offline sale payload is invalid');
+      return Map<String, dynamic>.from(jsonDecode(payload) as Map);
+    }).toList();
   }
 
   Future<void> enqueue(Map<String, dynamic> sale) async {
@@ -105,7 +120,7 @@ class OfflineSaleQueue {
   Future<int> count() async {
     final db = await _database;
     final result = await db.rawQuery('SELECT COUNT(*) AS count FROM $_table WHERE state = ?', ['pending']);
-    return (result.single['count'] as int?) ?? 0;
+    return (result.single['count'] as num?)?.toInt() ?? 0;
   }
 
   Future<SyncQueueResult> sync(PosApiClient api) async {
@@ -141,17 +156,17 @@ class OfflineSaleQueue {
             final id = ids[i];
             if (result['success'] == true) {
               completed++;
-              await txn.update(_table, {'state': 'completed', 'updated_at': now}, where: 'client_operation_id = ?', whereArgs: [id]);
+              await txn.update(_table, {'state': 'completed', 'updated_at': now, 'last_error': null}, where: 'client_operation_id = ?', whereArgs: [id]);
             } else if (result['conflict'] == true) {
               conflicts++;
               await txn.update(_table, {
                 'state': 'conflict',
                 'updated_at': now,
-                'last_error': '${result['message'] ?? 'Synchronization conflict'}',
+                'last_error': '${result['error'] ?? result['message'] ?? 'Synchronization conflict'}',
               }, where: 'client_operation_id = ?', whereArgs: [id]);
             } else {
               await txn.update(_table, {
-                'last_error': '${result['message'] ?? 'Synchronization failed'}',
+                'last_error': '${result['error'] ?? result['message'] ?? 'Synchronization failed'}',
                 'updated_at': now,
               }, where: 'client_operation_id = ?', whereArgs: [id]);
             }
