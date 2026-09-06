@@ -1,3 +1,4 @@
+using FindUpTo.Pos.Server.Endpoints;
 using FindUpTo.Pos.Server.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,6 +15,8 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Promotion> Promotions => Set<Promotion>();
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<Message> Messages => Set<Message>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -34,6 +37,9 @@ public class PosDbContext(DbContextOptions options) : DbContext(options)
         modelBuilder.Entity<Payment>().Property(x => x.Status).HasMaxLength(32);
         modelBuilder.Entity<Promotion>().Property(x => x.Name).HasMaxLength(160);
         modelBuilder.Entity<Promotion>().Property(x => x.DiscountType).HasMaxLength(16);
+        modelBuilder.Entity<Conversation>().Property(x => x.Participants).HasMaxLength(2000);
+        modelBuilder.Entity<Message>().Property(x => x.SenderUsername).HasMaxLength(64);
+        modelBuilder.Entity<Message>().Property(x => x.Text).HasMaxLength(4000);
     }
 }
 
