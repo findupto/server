@@ -143,6 +143,42 @@ public class PosApiTests : IClassFixture<PosApiFactory>
     }
 
     [Fact]
+    public async Task TrackedInventoryIsDeductedWhenOrderIsCreated()
+    {
+        await AuthenticateAsync("MK", "Admin-Test-Password-123!");
+        var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"Stock-{Guid.NewGuid():N}", sortOrder = 1 });
+        var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Stock Burger", description = "", price = 100m, imageUrl = "", available = true });
+        var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
+        var stockResponse = await client.PutAsJsonAsync($"/api/products/{product!.id}/inventory", new { quantityOnHand = 10m, reorderLevel = 2m, trackInventory = true, reason = "Opening stock" });
+        Assert.Equal(HttpStatusCode.OK, stockResponse.StatusCode);
+
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product.id, quantity = 3, notes = "" } }, orderType = "Counter", notes = "" });
+        Assert.Equal(HttpStatusCode.Created, orderResponse.StatusCode);
+        var inventoryResponse = await client.GetAsync("/api/inventory");
+        var inventory = await inventoryResponse.Content.ReadFromJsonAsync<List<InventoryResult>>();
+        var row = inventory!.Single(x => x.Id == product.id);
+        Assert.Equal(7m, row.QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task InsufficientInventoryBlocksOrderAndDoesNotGoNegative()
+    {
+        await AuthenticateAsync("MK", "Admin-Test-Password-123!");
+        var categoryResponse = await client.PostAsJsonAsync("/api/categories", new { name = $"LowStock-{Guid.NewGuid():N}", sortOrder = 1 });
+        var category = await categoryResponse.Content.ReadFromJsonAsync<IdResult>();
+        var productResponse = await client.PostAsJsonAsync("/api/products", new { categoryId = category!.id, name = "Limited Burger", description = "", price = 100m, imageUrl = "", available = true });
+        var product = await productResponse.Content.ReadFromJsonAsync<IdResult>();
+        await client.PutAsJsonAsync($"/api/products/{product!.id}/inventory", new { quantityOnHand = 2m, reorderLevel = 1m, trackInventory = true, reason = "Opening stock" });
+
+        var orderResponse = await client.PostAsJsonAsync("/api/orders", new { items = new[] { new { productId = product.id, quantity = 3, notes = "" } }, orderType = "Counter", notes = "" });
+        Assert.Equal(HttpStatusCode.Conflict, orderResponse.StatusCode);
+        var inventoryResponse = await client.GetAsync("/api/inventory");
+        var inventory = await inventoryResponse.Content.ReadFromJsonAsync<List<InventoryResult>>();
+        Assert.Equal(2m, inventory!.Single(x => x.Id == product.id).QuantityOnHand);
+    }
+
+    [Fact]
     public async Task PaymentCannotBeRecordedTwice()
     {
         await AuthenticateAsync("MK", "Admin-Test-Password-123!");
@@ -169,4 +205,5 @@ public class PosApiTests : IClassFixture<PosApiFactory>
     private sealed record LoginResult(string token, int userId, string username, string role);
     private sealed record IdResult(int id);
     private sealed record OrderResult(decimal subtotal, decimal discount, decimal tax, decimal total);
+    private sealed record InventoryResult(int Id, string Name, string Barcode, decimal QuantityOnHand, decimal ReorderLevel, bool TrackInventory, DateTime UpdatedAtUtc);
 }
