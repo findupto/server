@@ -9,7 +9,7 @@ public sealed class OrderItem { public int Id { get; set; } public int PosOrderI
 public sealed class Payment { public int Id { get; set; } public int PosOrderId { get; set; } public decimal AmountTendered { get; set; } public decimal AmountPaid { get; set; } public decimal ChangeAmount { get; set; } public string Method { get; set; } = "Cash"; public string Status { get; set; } = "Paid"; public string Reference { get; set; } = ""; public string ClientOperationId { get; set; } = ""; public string CollectedByUsername { get; set; } = ""; public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow; }
 public sealed class Promotion { public int Id { get; set; } public string Name { get; set; } = ""; public string Description { get; set; } = ""; public string DiscountType { get; set; } = "Percent"; public decimal Value { get; set; } public bool Active { get; set; } = true; public DateTime? StartsAtUtc { get; set; } public DateTime? EndsAtUtc { get; set; } public int? ProductId { get; set; } public int? CategoryId { get; set; } public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow; }
 public sealed record CategoryRequest(string Name, int SortOrder = 0);
-public sealed record ProductRequest(int CategoryId, string Name, string Description, decimal Price, string ImageUrl, bool Available = true);
+public sealed record ProductRequest(int CategoryId, string Name, string Description, decimal Price, string ImageUrl, bool Available = true, string Barcode = "");
 public sealed record CustomerRequest(string Name, string Phone, string Address, string Notes);
 public sealed record TableRequest(string Name, int Capacity = 2, bool Active = true);
 public sealed record TableStatusRequest(string Status);
