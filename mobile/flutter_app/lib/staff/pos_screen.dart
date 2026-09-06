@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/api_client.dart';
+import 'offline_sale_queue.dart';
 
 class PosScreen extends StatefulWidget {
   const PosScreen({super.key, required this.api});
@@ -13,19 +14,23 @@ class _PosScreenState extends State<PosScreen> {
   final _barcode = TextEditingController();
   final _search = TextEditingController();
   final _cart = <int, _CartLine>{};
+  final _queue = OfflineSaleQueue();
   List<Map<String, dynamic>> _products = [];
   List<Map<String, dynamic>> _tables = [];
   String _orderType = 'Dine In';
   String _payment = 'Cash';
   String _status = '';
   int? _tableId;
+  int _pendingCount = 0;
   bool _loading = true;
   bool _saving = false;
+  bool _syncing = false;
 
   @override
   void initState() {
     super.initState();
     _loadCatalog();
+    _refreshQueue();
   }
 
   Future<void> _loadCatalog() async {
@@ -40,8 +45,27 @@ class _PosScreenState extends State<PosScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() { _loading = false; _status = 'Could not load catalog: $e'; });
+      setState(() { _loading = false; _status = 'Offline: catalog unavailable. Queued sales can still retry.'; });
     }
+  }
+
+  Future<void> _refreshQueue() async {
+    final count = await _queue.count();
+    if (mounted) setState(() => _pendingCount = count);
+  }
+
+  Future<void> _syncQueue() async {
+    if (_syncing) return;
+    setState(() { _syncing = true; _status = 'Syncing pending sales...'; });
+    final result = await _queue.sync(widget.api);
+    if (!mounted) return;
+    setState(() {
+      _syncing = false;
+      _pendingCount = result.pending;
+      _status = result.completed > 0 || result.conflicts > 0
+          ? 'Synced ${result.completed} sale(s); ${result.conflicts} conflict(s); ${result.pending} still pending.'
+          : (result.pending > 0 ? 'Still offline. ${result.pending} sale(s) pending.' : 'All offline sales synced.');
+    });
   }
 
   void _add(Map<String, dynamic> p) {
@@ -76,28 +100,31 @@ class _PosScreenState extends State<PosScreen> {
       return;
     }
     setState(() { _saving = true; _status = 'Saving sale...'; });
+    final opId = 'pos-${DateTime.now().toUtc().microsecondsSinceEpoch}';
+    final sale = <String, dynamic>{
+      'clientOperationId': opId,
+      'tableId': _orderType == 'Dine In' ? _tableId : null,
+      'orderType': _orderType,
+      'notes': '',
+      'items': _cart.values.map((x) => {'productId': x.id, 'quantity': x.quantity, 'notes': ''}).toList(),
+    };
     try {
-      final opId = 'pos-${DateTime.now().toUtc().microsecondsSinceEpoch}';
       final order = await widget.api.createStaffOrder(
-        tableId: _orderType == 'Dine In' ? _tableId : null,
-        orderType: _orderType,
-        clientOperationId: opId,
-        items: _cart.values.map((x) => {'productId': x.id, 'quantity': x.quantity, 'notes': ''}).toList(),
+        tableId: sale['tableId'] as int?, orderType: _orderType,
+        clientOperationId: opId, items: List<Map<String, dynamic>>.from(sale['items'] as List),
       );
       final orderId = (order['id'] as num).toInt();
       final total = (order['total'] as num?)?.toDouble() ?? _subtotal;
       await widget.api.collectPayment(orderId, amountTendered: total, method: _payment);
       if (!mounted) return;
-      setState(() {
-        _cart.clear();
-        _tableId = null;
-        _saving = false;
-        _status = 'Sale #$orderId completed';
-      });
+      setState(() { _cart.clear(); _tableId = null; _saving = false; _status = 'Sale #$orderId completed'; });
+      await _refreshQueue();
       await _loadCatalog();
     } catch (e) {
+      await _queue.enqueue(sale);
+      await _refreshQueue();
       if (!mounted) return;
-      setState(() { _saving = false; _status = 'Sale failed: $e'; });
+      setState(() { _cart.clear(); _tableId = null; _saving = false; _status = 'Offline: sale queued for automatic retry. $_pendingCount pending.'; });
     }
   }
 
@@ -113,7 +140,11 @@ class _PosScreenState extends State<PosScreen> {
     final query = _search.text.toLowerCase();
     final products = _products.where((p) => '${p['name'] ?? ''}'.toLowerCase().contains(query) || '${p['barcode'] ?? ''}'.contains(query));
     return Scaffold(
-      appBar: AppBar(title: const Text('FindUpTo POS — Counter'), actions: [IconButton(onPressed: _loadCatalog, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(title: const Text('FindUpTo POS — Counter'), actions: [
+        if (_pendingCount > 0) Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Center(child: Text('$_pendingCount pending'))),
+        IconButton(onPressed: _syncing ? null : _syncQueue, icon: const Icon(Icons.sync)),
+        IconButton(onPressed: _loadCatalog, icon: const Icon(Icons.refresh)),
+      ]),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Row(children: [
