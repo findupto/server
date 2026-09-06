@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.ConfigurePosWindowsService();
 var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Source=pos.db";
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
 builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
