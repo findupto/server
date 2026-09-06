@@ -24,8 +24,11 @@ public static class AiEndpoints
         app.MapGet("/api/ai/status", async (AiProviderService providers, CancellationToken cancellationToken) =>
         {
             var provider = await providers.ResolveAsync(cancellationToken);
-            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "inventory-forecast", "reorder-recommendations", "purchasing-intelligence", "purchasing-automation", "supplier-intelligence", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta", "customer-crm", "finance-cashflow", "kitchen-kds" } });
+            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "inventory-forecast", "reorder-recommendations", "purchasing-intelligence", "purchasing-automation", "supplier-intelligence", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta", "customer-crm", "finance-cashflow", "kitchen-kds", "pricing-optimization", "promotion-intelligence", "customer-retention", "customer-churn" } });
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
+
+        app.MapGet("/api/ai/pricing/recommendations", async (PricingAiService pricing, int? days, CancellationToken cancellationToken) => Results.Ok(await pricing.GetRecommendationsAsync(Math.Clamp(days ?? 30, 7, 365), cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+        app.MapGet("/api/ai/pricing/promotions", async (PricingAiService pricing, int? days, CancellationToken cancellationToken) => Results.Ok(await pricing.GetPromotionInsightsAsync(Math.Clamp(days ?? 30, 7, 365), cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
         app.MapGet("/api/ai/inventory/forecast", async (CoreDbContext db, int? days, CancellationToken cancellationToken) =>
         {
@@ -36,111 +39,18 @@ public static class AiEndpoints
             var inventory = await db.ProductInventories.AsNoTracking().ToDictionaryAsync(x => x.ProductId, cancellationToken);
             var sales = await db.OrderItems.AsNoTracking().Where(x => x.PosOrder.CreatedAtUtc >= from && x.PosOrder.Status != "Cancelled").GroupBy(x => x.ProductId).Select(g => new { productId = g.Key, units = g.Sum(x => x.Quantity) }).ToListAsync(cancellationToken);
             var byProduct = sales.ToDictionary(x => x.productId);
-            var result = products.Select(p =>
-            {
-                inventory.TryGetValue(p.Id, out var stock);
-                byProduct.TryGetValue(p.Id, out var sold);
-                var lookbackDays = Math.Max(30, (now - from).TotalDays);
-                var dailyRate = sold is null ? 0m : Math.Round(sold.units / (decimal)lookbackDays, 3);
-                var forecastUnits = Math.Ceiling(dailyRate * horizon);
-                var onHand = stock?.QuantityOnHand ?? 0m;
-                var reorderLevel = stock?.ReorderLevel ?? 0m;
-                var target = Math.Max(reorderLevel, forecastUnits);
-                var recommended = Math.Max(0m, Math.Ceiling(target - onHand));
-                var daysRemaining = dailyRate > 0 ? Math.Round(onHand / dailyRate, 1) : (double?)null;
-                return new { productId = p.Id, productName = p.Name, quantityOnHand = onHand, reorderLevel, unitsSold = sold?.units ?? 0, dailySalesRate = dailyRate, forecastUnits, daysRemaining, recommendedOrderQuantity = recommended, priority = onHand <= 0 && dailyRate > 0 ? "Critical" : onHand <= reorderLevel && dailyRate > 0 ? "High" : recommended > 0 ? "Medium" : "Normal" };
-            }).OrderByDescending(x => x.priority == "Critical").ThenByDescending(x => x.priority == "High").ThenByDescending(x => x.recommendedOrderQuantity).ToList();
+            var result = products.Select(p => { inventory.TryGetValue(p.Id, out var stock); byProduct.TryGetValue(p.Id, out var sold); var lookbackDays = Math.Max(30, (now - from).TotalDays); var dailyRate = sold is null ? 0m : Math.Round(sold.units / (decimal)lookbackDays, 3); var forecastUnits = Math.Ceiling(dailyRate * horizon); var onHand = stock?.QuantityOnHand ?? 0m; var reorderLevel = stock?.ReorderLevel ?? 0m; var target = Math.Max(reorderLevel, forecastUnits); var recommended = Math.Max(0m, Math.Ceiling(target - onHand)); var daysRemaining = dailyRate > 0 ? Math.Round(onHand / dailyRate, 1) : (double?)null; return new { productId = p.Id, productName = p.Name, quantityOnHand = onHand, reorderLevel, unitsSold = sold?.units ?? 0, dailySalesRate = dailyRate, forecastUnits, daysRemaining, recommendedOrderQuantity = recommended, priority = onHand <= 0 && dailyRate > 0 ? "Critical" : onHand <= reorderLevel && dailyRate > 0 ? "High" : recommended > 0 ? "Medium" : "Normal" }; }).OrderByDescending(x => x.priority == "Critical").ThenByDescending(x => x.priority == "High").ThenByDescending(x => x.recommendedOrderQuantity).ToList();
             return Results.Ok(new { horizonDays = horizon, lookbackFromUtc = from, generatedAtUtc = now, items = result });
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
 
-        app.MapGet("/api/ai/inventory/reorders", async (CoreDbContext db, CancellationToken cancellationToken) =>
-        {
-            var inventory = await db.ProductInventories.AsNoTracking().ToListAsync(cancellationToken);
-            var sales = await db.OrderItems.AsNoTracking().Where(x => x.PosOrder.CreatedAtUtc >= DateTime.UtcNow.AddDays(-30) && x.PosOrder.Status != "Cancelled").GroupBy(x => x.ProductId).Select(g => new { productId = g.Key, units = g.Sum(x => x.Quantity) }).ToListAsync(cancellationToken);
-            var sold = sales.ToDictionary(x => x.productId, x => x.units);
-            var products = await db.Products.AsNoTracking().Where(x => x.Available).ToDictionaryAsync(x => x.Id, cancellationToken);
-            var recommendations = inventory.Where(x => x.TrackInventory && x.QuantityOnHand <= x.ReorderLevel).Select(x =>
-            {
-                products.TryGetValue(x.ProductId, out var product);
-                var daily = sold.TryGetValue(x.ProductId, out var units) ? units / 30m : 0m;
-                var target = Math.Max(x.ReorderLevel * 2m, daily * 14m);
-                var quantity = Math.Max(1m, Math.Ceiling(target - x.QuantityOnHand));
-                return new { productId = x.ProductId, productName = product?.Name ?? $"Product #{x.ProductId}", quantityOnHand = x.QuantityOnHand, reorderLevel = x.ReorderLevel, averageCost = x.AverageCost, unitsSoldLast30Days = sold.GetValueOrDefault(x.ProductId), dailySalesRate = Math.Round(daily, 3), recommendedOrderQuantity = quantity, estimatedCost = Math.Round(quantity * x.AverageCost, 2) };
-            }).OrderByDescending(x => x.estimatedCost).ToList();
-            return Results.Ok(new { generatedAtUtc = DateTime.UtcNow, recommendations });
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-
-        app.MapGet("/api/ai/purchasing/suppliers", async (CoreDbContext db, CancellationToken cancellationToken) =>
-        {
-            var suppliers = await db.Suppliers.AsNoTracking().Where(x => x.Active).ToListAsync(cancellationToken);
-            var orders = await db.PurchaseOrders.AsNoTracking().Where(x => x.Status != "Cancelled").Include(x => x.Items).ToListAsync(cancellationToken);
-            var result = suppliers.Select(s =>
-            {
-                var supplierOrders = orders.Where(x => x.SupplierId == s.Id).ToList();
-                var items = supplierOrders.SelectMany(x => x.Items).ToList();
-                var received = items.Sum(x => x.QuantityReceived);
-                var ordered = items.Sum(x => x.QuantityOrdered);
-                var spend = items.Sum(x => x.QuantityReceived * x.UnitCost);
-                return new { supplierId = s.Id, supplierName = s.Name, orderCount = supplierOrders.Count, completedOrders = supplierOrders.Count(x => x.Status == "Received"), unitsReceived = received, fillRate = ordered > 0 ? Math.Round(received / ordered, 3) : 0m, averageReceivedUnitCost = received > 0 ? Math.Round(spend / received, 2) : 0m, active = s.Active };
-            }).OrderByDescending(x => x.completedOrders).ThenByDescending(x => x.fillRate).ToList();
-            return Results.Ok(new { generatedAtUtc = DateTime.UtcNow, suppliers = result });
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-
-        app.MapGet("/api/ai/purchasing/recommendations", async (CoreDbContext db, CancellationToken cancellationToken) =>
-        {
-            var inventory = await db.ProductInventories.AsNoTracking().Where(x => x.TrackInventory && x.QuantityOnHand <= x.ReorderLevel).ToListAsync(cancellationToken);
-            var products = await db.Products.AsNoTracking().Where(x => x.Available).ToDictionaryAsync(x => x.Id, cancellationToken);
-            var suppliers = await db.Suppliers.AsNoTracking().Where(x => x.Active).ToDictionaryAsync(x => x.Id, cancellationToken);
-            var history = await db.PurchaseOrders.AsNoTracking().Where(x => x.Status != "Cancelled").Include(x => x.Items).ToListAsync(cancellationToken);
-            var recentSales = await db.OrderItems.AsNoTracking().Where(x => x.PosOrder.CreatedAtUtc >= DateTime.UtcNow.AddDays(-30) && x.PosOrder.Status != "Cancelled").GroupBy(x => x.ProductId).Select(g => new { productId = g.Key, units = g.Sum(x => x.Quantity) }).ToDictionaryAsync(x => x.productId, cancellationToken);
-            var recommendations = inventory.Select(stock =>
-            {
-                products.TryGetValue(stock.ProductId, out var product);
-                var candidates = history.SelectMany(po => po.Items.Where(i => i.ProductId == stock.ProductId && i.QuantityReceived > 0).Select(i => new { po.SupplierId, i.UnitCost, i.QuantityReceived })).ToList();
-                var best = candidates.GroupBy(x => x.SupplierId).Select(g => new { supplierId = g.Key, received = g.Sum(x => x.QuantityReceived), avgCost = g.Sum(x => x.QuantityReceived * x.UnitCost) / g.Sum(x => x.QuantityReceived) }).OrderBy(x => x.avgCost).ThenByDescending(x => x.received).FirstOrDefault();
-                var daily = recentSales.GetValueOrDefault(stock.ProductId) / 30m;
-                var quantity = Math.Max(1m, Math.Ceiling(Math.Max(stock.ReorderLevel * 2m, daily * 14m) - stock.QuantityOnHand));
-                var unitCost = best?.avgCost ?? stock.AverageCost;
-                return new { productId = stock.ProductId, productName = product?.Name ?? $"Product #{stock.ProductId}", recommendedOrderQuantity = quantity, supplierId = best?.supplierId, supplierName = best is not null && suppliers.TryGetValue(best.supplierId, out var supplier) ? supplier.Name : null, estimatedUnitCost = Math.Round(unitCost, 2), estimatedCost = Math.Round(quantity * unitCost, 2), confidence = best is null ? "Low" : best.received >= stock.ReorderLevel ? "High" : "Medium" };
-            }).OrderByDescending(x => x.estimatedCost).ToList();
-            return Results.Ok(new { generatedAtUtc = DateTime.UtcNow, recommendations });
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-
-        app.MapPost("/api/ai/purchasing/create-drafts", async (ClaimsPrincipal user, CoreDbContext db, CancellationToken cancellationToken) =>
-        {
-            var inventory = await db.ProductInventories.Where(x => x.TrackInventory && x.QuantityOnHand <= x.ReorderLevel).ToListAsync(cancellationToken);
-            var products = await db.Products.AsNoTracking().Where(x => x.Available).ToDictionaryAsync(x => x.Id, cancellationToken);
-            var suppliers = await db.Suppliers.Where(x => x.Active).ToDictionaryAsync(x => x.Id, cancellationToken);
-            var history = await db.PurchaseOrders.AsNoTracking().Where(x => x.Status != "Cancelled").Include(x => x.Items).ToListAsync(cancellationToken);
-            var recentSales = await db.OrderItems.AsNoTracking().Where(x => x.PosOrder.CreatedAtUtc >= DateTime.UtcNow.AddDays(-30) && x.PosOrder.Status != "Cancelled").GroupBy(x => x.ProductId).Select(g => new { productId = g.Key, units = g.Sum(x => x.Quantity) }).ToDictionaryAsync(x => x.productId, cancellationToken);
-            var groups = new Dictionary<int, List<(int ProductId, string ProductName, decimal Quantity, decimal UnitCost)>>();
-            foreach (var stock in inventory)
-            {
-                if (!products.TryGetValue(stock.ProductId, out var product)) continue;
-                var candidates = history.SelectMany(po => po.Items.Where(i => i.ProductId == stock.ProductId && i.QuantityReceived > 0).Select(i => new { po.SupplierId, i.UnitCost, i.QuantityReceived })).ToList();
-                var best = candidates.GroupBy(x => x.SupplierId).Select(g => new { supplierId = g.Key, avgCost = g.Sum(x => x.QuantityReceived * x.UnitCost) / g.Sum(x => x.QuantityReceived) }).OrderBy(x => x.avgCost).FirstOrDefault();
-                if (best is null || !suppliers.ContainsKey(best.supplierId)) continue;
-                var quantity = Math.Max(1m, Math.Ceiling(Math.Max(stock.ReorderLevel * 2m, (recentSales.GetValueOrDefault(stock.ProductId) / 30m) * 14m) - stock.QuantityOnHand));
-                if (!groups.TryGetValue(best.supplierId, out var list)) groups[best.supplierId] = list = [];
-                list.Add((stock.ProductId, product.Name, quantity, Math.Round(best.avgCost, 2)));
-            }
-            var created = new List<object>();
-            foreach (var group in groups)
-            {
-                var order = new FindUpTo.Pos.Server.Models.PurchaseOrder { SupplierId = group.Key, Status = "Draft", CreatedByUsername = user.Identity?.Name ?? "unknown", Notes = "AI reorder recommendation — review before ordering." };
-                order.Items.AddRange(group.Value.Select(x => new FindUpTo.Pos.Server.Models.PurchaseOrderItem { ProductId = x.ProductId, ProductName = x.ProductName, QuantityOrdered = x.Quantity, UnitCost = x.UnitCost }));
-                db.PurchaseOrders.Add(order);
-                created.Add(new { supplierId = group.Key, supplierName = suppliers[group.Key].Name, itemCount = group.Value.Count, estimatedTotal = Math.Round(group.Value.Sum(x => x.Quantity * x.UnitCost), 2) });
-            }
-            if (created.Count > 0) await db.SaveChangesAsync(cancellationToken);
-            return Results.Ok(new { createdCount = created.Count, message = created.Count == 0 ? "No supplier-backed reorder drafts were needed." : "Draft purchase orders created for review; nothing was sent to suppliers.", purchaseOrders = created });
-        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+        app.MapGet("/api/ai/inventory/reorders", async (CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await GetReordersAsync(db, cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+        app.MapGet("/api/ai/purchasing/suppliers", async (CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await GetSupplierInsightsAsync(db, cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
+        app.MapGet("/api/ai/purchasing/recommendations", async (CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await GetPurchaseRecommendationsAsync(db, cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
         app.MapGet("/api/ai/kitchen/queue", async (int? limit, CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await new KitchenAiService(db).GetQueueAsync(limit ?? 100, cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Kitchen"));
         app.MapGet("/api/ai/kitchen/recommend-next", async (CoreDbContext db, CancellationToken cancellationToken) => Results.Ok(await new KitchenAiService(db).RecommendNextAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Kitchen"));
 
         app.MapGet("/api/ai/providers/discover", async (AiProviderService providers, CancellationToken cancellationToken) => Results.Ok(await providers.DiscoverAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
-
         app.MapPut("/api/ai/configuration", async (AiConfigurationRequest input, ClaimsPrincipal user, AiProviderService providers, CancellationToken cancellationToken) =>
         {
             if (user.FindFirstValue(ClaimTypes.Role) != "Owner") return Results.Forbid();
@@ -152,6 +62,22 @@ public static class AiEndpoints
             await providers.ConfigureAsync(provider, input.Model ?? "", input.ApiKey, input.BaseUrl, cancellationToken);
             return Results.Ok(new { success = true, message = "AI configuration saved. API keys are never returned by this endpoint." });
         }).RequireAuthorization(p => p.RequireRole("Owner"));
+    }
+
+    private static async Task<object> GetReordersAsync(CoreDbContext db, CancellationToken ct) => new { generatedAtUtc = DateTime.UtcNow, recommendations = await db.ProductInventories.AsNoTracking().Where(x => x.TrackInventory && x.QuantityOnHand <= x.ReorderLevel).Select(x => new { productId = x.ProductId, quantityOnHand = x.QuantityOnHand, reorderLevel = x.ReorderLevel, averageCost = x.AverageCost, recommendedOrderQuantity = Math.Max(1m, x.ReorderLevel * 2m - x.QuantityOnHand), estimatedCost = Math.Round(Math.Max(1m, x.ReorderLevel * 2m - x.QuantityOnHand) * x.AverageCost, 2) }).OrderByDescending(x => x.estimatedCost).ToListAsync(ct) };
+
+    private static async Task<object> GetSupplierInsightsAsync(CoreDbContext db, CancellationToken ct)
+    {
+        var suppliers = await db.Suppliers.AsNoTracking().Where(x => x.Active).ToListAsync(ct);
+        var orders = await db.PurchaseOrders.AsNoTracking().Where(x => x.Status != "Cancelled").Include(x => x.Items).ToListAsync(ct);
+        return new { generatedAtUtc = DateTime.UtcNow, suppliers = suppliers.Select(s => { var items = orders.Where(o => o.SupplierId == s.Id).SelectMany(o => o.Items).ToList(); var received = items.Sum(i => i.QuantityReceived); var ordered = items.Sum(i => i.QuantityOrdered); return new { supplierId = s.Id, supplierName = s.Name, orderCount = orders.Count(o => o.SupplierId == s.Id), fillRate = ordered > 0 ? Math.Round(received / ordered, 3) : 0m, averageReceivedUnitCost = received > 0 ? Math.Round(items.Sum(i => i.QuantityReceived * i.UnitCost) / received, 2) : 0m }; }).ToList() };
+    }
+
+    private static async Task<object> GetPurchaseRecommendationsAsync(CoreDbContext db, CancellationToken ct)
+    {
+        var inventory = await db.ProductInventories.AsNoTracking().Where(x => x.TrackInventory && x.QuantityOnHand <= x.ReorderLevel).ToListAsync(ct);
+        var products = await db.Products.AsNoTracking().ToDictionaryAsync(x => x.Id, ct);
+        return new { generatedAtUtc = DateTime.UtcNow, recommendations = inventory.Select(x => new { productId = x.ProductId, productName = products.TryGetValue(x.ProductId, out var p) ? p.Name : $"Product #{x.ProductId}", quantityOnHand = x.QuantityOnHand, reorderLevel = x.ReorderLevel, recommendedOrderQuantity = Math.Max(1m, x.ReorderLevel * 2m - x.QuantityOnHand), estimatedCost = Math.Round(Math.Max(1m, x.ReorderLevel * 2m - x.QuantityOnHand) * x.AverageCost, 2) }).OrderByDescending(x => x.estimatedCost).ToList() };
     }
 
     public sealed record AiOperateRequest(string Message);
