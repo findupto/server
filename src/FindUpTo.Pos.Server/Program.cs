@@ -15,7 +15,7 @@ using Microsoft.IdentityModel.Tokens;
 var builder = WebApplication.CreateBuilder(args);
 var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Source=pos.db";
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
-builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>(); builder.Services.AddHostedService<AutomaticBackupHostedService>(); builder.Services.AddSignalR(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>(); builder.Services.AddHostedService<AutomaticBackupHostedService>(); builder.Services.AddHostedService<SyncSchemaHostedService>(); builder.Services.AddSignalR(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
 if (string.IsNullOrWhiteSpace(jwtKey) && builder.Environment.IsDevelopment()) jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
 if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32) throw new InvalidOperationException("A JWT signing key of at least 32 characters is required. Configure Jwt:Key or POS_JWT_KEY.");
