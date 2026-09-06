@@ -16,20 +16,36 @@ public sealed class InventoryService(CoreDbContext db)
         var quantities = order.Items.GroupBy(x => x.ProductId).ToDictionary(g => g.Key, g => g.Sum(x => (decimal)x.Quantity));
         if (quantities.Count == 0) return InventorySaleResult.Ok();
 
-        var trackedIds = await db.ProductInventories.Where(x => quantities.Keys.Contains(x.ProductId) && x.TrackInventory).Select(x => x.ProductId).ToListAsync();
-        foreach (var productId in trackedIds)
+        var tracked = await db.ProductInventories.Where(x => quantities.Keys.Contains(x.ProductId) && x.TrackInventory).ToDictionaryAsync(x => x.ProductId);
+        foreach (var (productId, quantity) in quantities)
         {
-            var quantity = quantities[productId];
-            var changed = await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE ProductInventories SET QuantityOnHand = QuantityOnHand - {quantity}, UpdatedAtUtc = {DateTime.UtcNow} WHERE ProductId = {productId} AND TrackInventory = 1 AND QuantityOnHand >= {quantity}");
-            if (changed != 1)
+            if (!tracked.TryGetValue(productId, out var inventory)) continue;
+
+            decimal balance;
+            if (db.Database.IsRelational())
             {
-                var current = await db.ProductInventories.AsNoTracking().SingleOrDefaultAsync(x => x.ProductId == productId);
-                var product = await db.Products.AsNoTracking().SingleOrDefaultAsync(x => x.Id == productId);
-                return new InventorySaleResult(false, productId, product?.Name ?? productId.ToString(), quantity, current?.QuantityOnHand ?? 0m);
+                var changed = await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE ProductInventories SET QuantityOnHand = QuantityOnHand - {quantity}, UpdatedAtUtc = {DateTime.UtcNow} WHERE ProductId = {productId} AND TrackInventory = 1 AND QuantityOnHand >= {quantity}");
+                if (changed != 1)
+                {
+                    var current = await db.ProductInventories.AsNoTracking().SingleOrDefaultAsync(x => x.ProductId == productId);
+                    var product = await db.Products.AsNoTracking().SingleOrDefaultAsync(x => x.Id == productId);
+                    return new InventorySaleResult(false, productId, product?.Name ?? productId.ToString(), quantity, current?.QuantityOnHand ?? 0m);
+                }
+                balance = await db.ProductInventories.AsNoTracking().Where(x => x.ProductId == productId).Select(x => x.QuantityOnHand).SingleAsync();
+            }
+            else
+            {
+                if (inventory.QuantityOnHand < quantity)
+                {
+                    var product = await db.Products.AsNoTracking().SingleOrDefaultAsync(x => x.Id == productId);
+                    return new InventorySaleResult(false, productId, product?.Name ?? productId.ToString(), quantity, inventory.QuantityOnHand);
+                }
+                balance = inventory.QuantityOnHand - quantity;
+                inventory.QuantityOnHand = balance;
+                inventory.UpdatedAtUtc = DateTime.UtcNow;
             }
 
-            var currentBalance = await db.ProductInventories.AsNoTracking().Where(x => x.ProductId == productId).Select(x => x.QuantityOnHand).SingleAsync();
-            db.StockMovements.Add(new StockMovement { ProductId = productId, QuantityChange = -quantity, BalanceAfter = currentBalance, Type = "Sale", Reason = $"Order {order.Id}", Username = order.CreatedByUsername, CreatedAtUtc = DateTime.UtcNow });
+            db.StockMovements.Add(new StockMovement { ProductId = productId, QuantityChange = -quantity, BalanceAfter = balance, Type = "Sale", Reason = $"Order {order.Id}", Username = order.CreatedByUsername, CreatedAtUtc = DateTime.UtcNow });
         }
 
         await db.SaveChangesAsync();
