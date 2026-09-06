@@ -162,6 +162,8 @@ app.MapCustomerEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
+public partial class Program { }
+
 static async Task NotifyOrder(WebApplication app, PosOrder order)
 {
     var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
