@@ -1,5 +1,7 @@
 using System.Security.Claims;
+using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace FindUpTo.Pos.Server.Endpoints;
 
@@ -22,7 +24,24 @@ public static class AiEndpoints
         app.MapGet("/api/ai/status", async (AiProviderService providers, CancellationToken cancellationToken) =>
         {
             var provider = await providers.ResolveAsync(cancellationToken);
-            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta" } });
+            return Results.Ok(new { enabled = provider.Provider != "none", provider = provider.Provider, baseUrl = provider.BaseUrl, model = provider.Model, requiresApiKey = provider.RequiresApiKey, local = provider.Local, status = provider.Status, capabilities = new[] { "sales", "payments", "inventory", "purchasing", "receiving", "product-updates", "reports", "receipt-printing", "rider-tracking", "delivery-tracking", "routing-eta", "customer-crm", "finance-cashflow" } });
+        }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
+
+        app.MapGet("/api/ai/finance/summary", async (CoreDbContext db, int? days, CancellationToken cancellationToken) =>
+        {
+            var period = Math.Clamp(days ?? 30, 1, 3650);
+            var from = DateTime.UtcNow.AddDays(-period);
+            var orders = await db.Orders.AsNoTracking().Where(x => x.CreatedAtUtc >= from && x.Status != "Cancelled").ToListAsync(cancellationToken);
+            var payments = await db.Payments.AsNoTracking().Where(x => x.CreatedAtUtc >= from && x.Status == "Paid").ToListAsync(cancellationToken);
+            var expenses = await db.Expenses.AsNoTracking().Where(x => x.ExpenseDateUtc >= from).ToListAsync(cancellationToken);
+            var revenue = Math.Round(payments.Sum(x => x.AmountPaid - x.ChangeAmount), 2);
+            var expensesTotal = Math.Round(expenses.Sum(x => x.Amount), 2);
+            var netCash = Math.Round(revenue - expensesTotal, 2);
+            var orderValue = Math.Round(orders.Sum(x => x.Total), 2);
+            var paymentByMethod = payments.GroupBy(x => x.Method).Select(g => new { method = g.Key, amount = Math.Round(g.Sum(x => x.AmountPaid - x.ChangeAmount), 2), count = g.Count() }).OrderByDescending(x => x.amount).ToList();
+            var expenseByCategory = expenses.GroupBy(x => x.Category).Select(g => new { category = g.Key, amount = Math.Round(g.Sum(x => x.Amount), 2), count = g.Count() }).OrderByDescending(x => x.amount).ToList();
+            var credit = await db.CustomerCreditAccounts.AsNoTracking().Where(x => x.Active).ToListAsync(cancellationToken);
+            return Results.Ok(new { periodDays = period, fromUtc = from, toUtc = DateTime.UtcNow, orderCount = orders.Count, orderValue, collectedRevenue = revenue, expenses = expensesTotal, netCash, averageOrderValue = orders.Count == 0 ? 0m : Math.Round(orderValue / orders.Count, 2), outstandingCustomerCredit = Math.Round(credit.Sum(x => x.Balance), 2), paymentByMethod, expenseByCategory, alerts = BuildFinanceAlerts(revenue, expensesTotal, credit.Sum(x => x.Balance), orders.Count) });
         }).RequireAuthorization(p => p.RequireRole(AllowedRoles));
 
         app.MapGet("/api/ai/providers/discover", async (AiProviderService providers, CancellationToken cancellationToken) => Results.Ok(await providers.DiscoverAsync(cancellationToken))).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
@@ -38,6 +57,15 @@ public static class AiEndpoints
             await providers.ConfigureAsync(provider, input.Model ?? "", input.ApiKey, input.BaseUrl, cancellationToken);
             return Results.Ok(new { success = true, message = "AI configuration saved. API keys are never returned by this endpoint." });
         }).RequireAuthorization(p => p.RequireRole("Owner"));
+    }
+
+    private static object[] BuildFinanceAlerts(decimal revenue, decimal expenses, decimal credit, int orders)
+    {
+        var alerts = new List<object>();
+        if (orders == 0) alerts.Add(new { level = "warning", code = "NO_SALES", message = "No non-cancelled orders were recorded in the selected period." });
+        if (expenses > revenue && revenue > 0) alerts.Add(new { level = "critical", code = "NEGATIVE_CASHFLOW", message = "Recorded expenses exceed collected revenue in the selected period." });
+        if (credit > 0) alerts.Add(new { level = "info", code = "OUTSTANDING_CREDIT", message = $"Customer credit outstanding: {credit:0.00}." });
+        return alerts.ToArray();
     }
 
     public sealed record AiOperateRequest(string Message);
