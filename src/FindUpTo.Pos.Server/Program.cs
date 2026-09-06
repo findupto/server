@@ -1,6 +1,6 @@
+using System.Text;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Endpoints;
 using FindUpTo.Pos.Server.Hubs;
@@ -17,10 +17,7 @@ var connection = builder.Configuration.GetConnectionString("Pos") ?? "Data Sourc
 builder.Services.AddDbContext<CoreDbContext>(options => options.UseSqlite(connection));
 builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
 builder.Services.AddHostedService<AutomaticBackupHostedService>();
-builder.Services.AddSignalR();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
+builder.Services.AddSignalR(); builder.Services.AddEndpointsApiExplorer(); builder.Services.AddSwaggerGen();
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
 if (string.IsNullOrWhiteSpace(jwtKey) && builder.Environment.IsDevelopment()) jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
 if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32) throw new InvalidOperationException("A JWT signing key of at least 32 characters is required. Configure Jwt:Key or POS_JWT_KEY.");
@@ -32,7 +29,6 @@ using (var scope = app.Services.CreateScope()) { var db = scope.ServiceProvider.
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.UseAuthentication(); app.UseAuthorization();
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "findupto-pos-server" }));
-
 app.MapPost("/api/auth/login", async (LoginRequest request, CoreDbContext db, IPasswordHasher<AppUser> hasher) => { var user = await db.Users.SingleOrDefaultAsync(x => x.Username == request.Username && x.Active); if (user is null || hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed) return Results.Unauthorized(); var claims = new[] { new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()), new Claim(ClaimTypes.Name, user.Username), new Claim(ClaimTypes.Role, user.Role) }; var token = new JwtSecurityToken(claims: claims, expires: DateTime.UtcNow.AddHours(12), signingCredentials: new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256)); return Results.Ok(new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token), user.Id, user.Username, user.Role)); }).AllowAnonymous();
 app.MapGet("/api/me", (ClaimsPrincipal user) => Results.Ok(new { username = user.Identity?.Name, role = user.FindFirstValue(ClaimTypes.Role) })).RequireAuthorization();
 app.MapGet("/api/settings", async (CoreDbContext db) => Results.Ok(await db.BusinessSettings.AsNoTracking().SingleAsync())).RequireAuthorization();
@@ -48,7 +44,7 @@ app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user
 app.MapGet("/api/orders", async (CoreDbContext db, string? status) => { var q = db.Orders.AsNoTracking().Include(x => x.Items).AsQueryable(); if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status); return Results.Ok(await q.OrderByDescending(x => x.CreatedAtUtc).Take(200).ToListAsync()); }).RequireAuthorization();
 app.MapGet("/api/orders/{id:int}", async (int id, CoreDbContext db) => { var order = await db.Orders.AsNoTracking().Include(x => x.Items).SingleOrDefaultAsync(x => x.Id == id); return order is null ? Results.NotFound() : Results.Ok(order); }).RequireAuthorization();
 app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, ClaimsPrincipal user, CoreDbContext db) => { var allowed = new[] { "New", "Accepted", "Preparing", "Ready", "OutForDelivery", "Served", "Completed", "Cancelled" }; if (!allowed.Contains(input.Status, StringComparer.OrdinalIgnoreCase)) return Results.BadRequest("Invalid order status."); var order = await db.Orders.FindAsync(id); if (order is null) return Results.NotFound(); order.Status = allowed.First(x => string.Equals(x, input.Status, StringComparison.OrdinalIgnoreCase)); order.UpdatedAtUtc = DateTime.UtcNow; await db.SaveChangesAsync(); await AuditEndpoints.WriteAsync(db, user, "StatusChanged", "Order", order.Id.ToString(), order.Status); await NotifyOrder(app, order); return Results.Ok(order); }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
-app.MapUserEndpoints(); app.MapWorkflowEndpoints(); app.MapPromotionEndpoints(); app.MapMessagingEndpoints(); app.MapCustomerEndpoints(); app.MapReportEndpoints(); app.MapAuditEndpoints(); app.MapCashDrawerEndpoints(); app.MapBackupEndpoints(); app.MapHub<PosHub>("/hubs/pos"); app.Run();
+app.MapUserEndpoints(); app.MapWorkflowEndpoints(); app.MapPromotionEndpoints(); app.MapMessagingEndpoints(); app.MapCustomerEndpoints(); app.MapReportEndpoints(); app.MapAuditEndpoints(); app.MapCashDrawerEndpoints(); app.MapBackupEndpoints(); app.MapSyncEndpoints(); app.MapHub<PosHub>("/hubs/pos"); app.Run();
 public partial class Program { }
 static async Task NotifyOrder(WebApplication app, PosOrder order) { var hub = app.Services.GetRequiredService<IHubContext<PosHub>>(); await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc }); }
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher, IWebHostEnvironment environment) { if (!await db.BusinessSettings.AnyAsync()) { db.BusinessSettings.Add(new BusinessSetting()); await db.SaveChangesAsync(); } if (await db.Users.AnyAsync()) return; var seedUsers = new[] { (Username: "Malik", Role: "Owner", Env: "INITIAL_OWNER_PASSWORD"), (Username: "MK", Role: "Admin", Env: "INITIAL_ADMIN_PASSWORD"), (Username: "WR", Role: "Waiter", Env: "INITIAL_WAITER_PASSWORD"), (Username: "CP", Role: "Counter", Env: "INITIAL_COUNTER_PASSWORD") }; foreach (var item in seedUsers) { var password = Environment.GetEnvironmentVariable(item.Env); if (string.IsNullOrWhiteSpace(password)) { if (!environment.IsDevelopment()) throw new InvalidOperationException($"Missing required initial password environment variable: {item.Env}"); password = $"CHANGE_ME_{item.Username}"; } var user = new AppUser { Username = item.Username, Role = item.Role }; user.PasswordHash = hasher.HashPassword(user, password); db.Users.Add(user); } await db.SaveChangesAsync(); }
