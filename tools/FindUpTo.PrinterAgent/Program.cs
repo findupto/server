@@ -71,7 +71,7 @@ static class PrinterService
                 var name = q.Name;
                 var port = Safe(() => q.QueuePort?.Name);
                 var driver = Safe(() => q.QueueDriver?.Name);
-                var connected = Safe(() => !q.IsOffline) ?? true;
+                var connected = Safe(() => !q.IsOffline);
                 var kind = Classify(name, port, driver);
                 var connection = port ?? "Windows spooler";
                 q.Dispose();
