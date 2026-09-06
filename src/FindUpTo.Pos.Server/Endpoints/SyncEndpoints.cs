@@ -43,6 +43,8 @@ public static class SyncEndpoints
             {
                 if (string.IsNullOrWhiteSpace(input.ClientOperationId) || input.ClientOperationId.Length > 128)
                 { results.Add(new { success = false, error = "ClientOperationId is required for offline synchronization." }); continue; }
+                if (!string.IsNullOrWhiteSpace(input.PaymentClientOperationId) && input.PaymentClientOperationId.Length > 128)
+                { await RecordConflict(input.ClientOperationId, "", "InvalidPaymentOperation", "Payment operation id is too long."); results.Add(new { success = false, conflict = true, error = "Payment operation id is too long." }); continue; }
                 if (input.Items is null || input.Items.Count == 0 || input.Items.Count > MaxItemsPerOrder)
                 { await RecordConflict(input.ClientOperationId, "", "InvalidItems", "Order must contain between 1 and 100 items."); results.Add(new { success = false, conflict = true, error = "Invalid order items." }); continue; }
 
@@ -53,10 +55,8 @@ public static class SyncEndpoints
                     if (!paid && HasPayment(input))
                     {
                         var paymentResult = await TryCreatePaymentAsync(db, existing.OrderId, input, username, ct);
-                        if (!paymentResult.Success)
-                            results.Add(new { success = true, duplicate = true, orderId = existing.OrderId, paid = false, paymentError = paymentResult.Error });
-                        else
-                            results.Add(new { success = true, duplicate = true, orderId = existing.OrderId, paid = true });
+                        if (!paymentResult.Success) results.Add(new { success = true, duplicate = true, orderId = existing.OrderId, paid = false, paymentError = paymentResult.Error });
+                        else results.Add(new { success = true, duplicate = true, orderId = existing.OrderId, paid = true });
                     }
                     else results.Add(new { success = true, duplicate = true, orderId = existing.OrderId, paid });
                     continue;
@@ -73,12 +73,14 @@ public static class SyncEndpoints
                 { await RecordConflict(input.ClientOperationId, "", "InvalidOrderType", "Unsupported order type."); results.Add(new { success = false, conflict = true, error = "Unsupported order type." }); continue; }
                 if (orderType.Equals("Dine In", StringComparison.OrdinalIgnoreCase) && !input.TableId.HasValue)
                 { await RecordConflict(input.ClientOperationId, "", "TableRequired", "Dine In orders require a table."); results.Add(new { success = false, conflict = true, error = "Dine In orders require a table." }); continue; }
+                if (orderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase) && !input.CustomerId.HasValue)
+                { await RecordConflict(input.ClientOperationId, "", "CustomerRequired", "Delivery orders require a customer."); results.Add(new { success = false, conflict = true, error = "Delivery orders require a customer." }); continue; }
 
                 var order = new PosOrder { CustomerId = input.CustomerId, TableId = input.TableId, CreatedByUsername = username, OrderType = orderType, Notes = (input.Notes ?? string.Empty).Trim() };
                 foreach (var item in input.Items)
                 {
                     if (item.Quantity <= 0 || item.Quantity > 1000 || !products.TryGetValue(item.ProductId, out var product)) { order = null!; break; }
-                    order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = item.Quantity, Notes = (item.Notes ?? string.Empty).Trim(), LineTotal = Math.Round(product.Price * item.Quantity, 2) });
+                    order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = Math.Round(product.Price, 2), Quantity = item.Quantity, Notes = (item.Notes ?? string.Empty).Trim(), LineTotal = Math.Round(product.Price * item.Quantity, 2) });
                 }
                 if (order is null) { await RecordConflict(input.ClientOperationId, "", "InvalidLine", "Invalid quantity or product."); results.Add(new { success = false, conflict = true, error = "Invalid quantity or product." }); continue; }
                 order.Subtotal = Math.Round(order.Items.Sum(x => x.LineTotal), 2);
@@ -110,7 +112,7 @@ public static class SyncEndpoints
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter", "Waiter"));
     }
 
-    private static bool HasPayment(CreateOrderRequest input) => !string.IsNullOrWhiteSpace(input.PaymentMethod) || input.AmountTendered.HasValue || !string.IsNullOrWhiteSpace(input.PaymentReference);
+    private static bool HasPayment(CreateOrderRequest input) => !string.IsNullOrWhiteSpace(input.PaymentMethod) || input.AmountTendered.HasValue || !string.IsNullOrWhiteSpace(input.PaymentReference) || !string.IsNullOrWhiteSpace(input.PaymentClientOperationId);
 
     private static async Task<(bool Success, string? Error)> TryCreatePaymentAsync(CoreDbContext db, int orderId, CreateOrderRequest input, string username, CancellationToken ct)
     {
@@ -134,7 +136,9 @@ public static class SyncEndpoints
             if (string.IsNullOrWhiteSpace(input.PaymentReference) || input.PaymentReference.Trim().Length > 200) return (false, "Card and Online payments require a valid payment reference.");
         }
         if (await db.Payments.AnyAsync(x => x.PosOrderId == orderId && x.Status == "Paid", ct)) return (false, "Order is already paid.");
-        db.Payments.Add(new Payment { PosOrderId = orderId, AmountTendered = tendered, AmountPaid = total, ChangeAmount = method == "Cash" ? Math.Round(tendered - total, 2) : 0m, Method = method, Reference = (input.PaymentReference ?? string.Empty).Trim(), CollectedByUsername = username });
+        var paymentOperationId = input.PaymentClientOperationId?.Trim() ?? "";
+        if (paymentOperationId.Length > 0 && await db.Payments.AnyAsync(x => x.ClientOperationId == paymentOperationId, ct)) return (true, null);
+        db.Payments.Add(new Payment { PosOrderId = orderId, AmountTendered = tendered, AmountPaid = total, ChangeAmount = method == "Cash" ? Math.Round(tendered - total, 2) : 0m, Method = method, Reference = (input.PaymentReference ?? string.Empty).Trim(), ClientOperationId = paymentOperationId, CollectedByUsername = username });
         await db.SaveChangesAsync(ct);
         return (true, null);
     }
