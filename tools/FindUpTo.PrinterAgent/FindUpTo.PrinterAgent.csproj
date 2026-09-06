@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>FindUpTo.PrinterAgent</AssemblyName>
     <RootNamespace>FindUpTo.PrinterAgent</RootNamespace>
   </PropertyGroup>
