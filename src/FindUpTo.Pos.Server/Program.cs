@@ -151,6 +151,7 @@ app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequ
     await db.SaveChangesAsync(); await NotifyOrder(app, order); return Results.Ok(order);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
+app.MapUserEndpoints();
 app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
 app.MapMessagingEndpoints();
