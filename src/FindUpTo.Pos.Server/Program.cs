@@ -102,6 +102,7 @@ app.MapGet("/api/products", async (CoreDbContext db, int? categoryId) =>
     return Results.Ok(await q.OrderBy(x => x.Name).ToListAsync());
 }).AllowAnonymous();
 
+app.MapCatalogEndpoints();
 app.MapUserEndpoints();
 app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
@@ -117,6 +118,7 @@ app.MapTableEndpoints();
 app.MapReceiptEndpoints();
 app.MapDeviceEndpoints();
 app.MapNotificationEndpoints();
+app.MapBarcodeEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
