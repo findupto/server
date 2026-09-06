@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using FindUpTo.Pos.Server.Data;
+using FindUpTo.Pos.Server.Endpoints;
 using FindUpTo.Pos.Server.Hubs;
 using FindUpTo.Pos.Server.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -123,7 +124,6 @@ app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user
     var products = await db.Products.Where(x => ids.Contains(x.Id) && x.Available).ToDictionaryAsync(x => x.Id);
     if (products.Count != ids.Count) return Results.BadRequest("One or more products are unavailable.");
     if (input.CustomerId.HasValue && !await db.Customers.AnyAsync(x => x.Id == input.CustomerId.Value)) return Results.BadRequest("Customer not found.");
-
     var order = new PosOrder { CustomerId = input.CustomerId, CreatedByUsername = user.Identity?.Name ?? "unknown", OrderType = string.IsNullOrWhiteSpace(input.OrderType) ? "Counter" : input.OrderType.Trim(), Notes = input.Notes.Trim() };
     foreach (var line in input.Items)
     {
@@ -160,8 +160,9 @@ app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequ
     var order = await db.Orders.FindAsync(id); if (order is null) return Results.NotFound();
     order.Status = allowed.First(x => string.Equals(x, input.Status, StringComparison.OrdinalIgnoreCase)); order.UpdatedAtUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(); await NotifyOrder(app, order); return Results.Ok(order);
-}).RequireAuthorization();
+}).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
+app.MapWorkflowEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
