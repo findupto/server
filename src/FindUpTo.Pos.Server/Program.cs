@@ -74,6 +74,7 @@ app.MapGet("/api/products", async (CoreDbContext db, int? categoryId) => { var q
 
 app.MapCatalogEndpoints();
 app.MapInventoryEndpoints();
+app.MapPurchasingEndpoints();
 app.MapUserEndpoints();
 app.MapWorkflowEndpoints();
 app.MapPromotionEndpoints();
@@ -110,6 +111,7 @@ static async Task PrepareDatabaseAsync(CoreDbContext db)
     else
     {
         await EnsureInventorySchemaAsync(db);
+        await EnsurePurchasingSchemaAsync(db);
     }
 }
 
@@ -119,6 +121,14 @@ static async Task EnsureInventorySchemaAsync(CoreDbContext db)
     await db.Database.ExecuteSqlRawAsync("CREATE UNIQUE INDEX IF NOT EXISTS IX_ProductInventories_ProductId ON ProductInventories(ProductId);");
     await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS StockMovements (Id INTEGER NOT NULL CONSTRAINT PK_StockMovements PRIMARY KEY AUTOINCREMENT, ProductId INTEGER NOT NULL, QuantityChange TEXT NOT NULL, BalanceAfter TEXT NOT NULL, Type TEXT NOT NULL, Reason TEXT NOT NULL, Username TEXT NOT NULL, CreatedAtUtc TEXT NOT NULL);");
     await db.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS IX_StockMovements_ProductId_CreatedAtUtc ON StockMovements(ProductId, CreatedAtUtc);");
+}
+
+static async Task EnsurePurchasingSchemaAsync(CoreDbContext db)
+{
+    await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS Suppliers (Id INTEGER NOT NULL CONSTRAINT PK_Suppliers PRIMARY KEY AUTOINCREMENT, Name TEXT NOT NULL, Phone TEXT NOT NULL, Email TEXT NOT NULL, Address TEXT NOT NULL, Notes TEXT NOT NULL, Active INTEGER NOT NULL DEFAULT 1, CreatedAtUtc TEXT NOT NULL);");
+    await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS PurchaseOrders (Id INTEGER NOT NULL CONSTRAINT PK_PurchaseOrders PRIMARY KEY AUTOINCREMENT, SupplierId INTEGER NOT NULL, Status TEXT NOT NULL, CreatedByUsername TEXT NOT NULL, Notes TEXT NOT NULL, CreatedAtUtc TEXT NOT NULL, UpdatedAtUtc TEXT NOT NULL);");
+    await db.Database.ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS PurchaseOrderItems (Id INTEGER NOT NULL CONSTRAINT PK_PurchaseOrderItems PRIMARY KEY AUTOINCREMENT, PurchaseOrderId INTEGER NOT NULL, ProductId INTEGER NOT NULL, ProductName TEXT NOT NULL, QuantityOrdered TEXT NOT NULL, QuantityReceived TEXT NOT NULL, UnitCost TEXT NOT NULL);");
+    await db.Database.ExecuteSqlRawAsync("CREATE INDEX IF NOT EXISTS IX_PurchaseOrderItems_PurchaseOrderId ON PurchaseOrderItems(PurchaseOrderId);");
 }
 
 static async Task SeedAsync(CoreDbContext db, IPasswordHasher<AppUser> hasher)
