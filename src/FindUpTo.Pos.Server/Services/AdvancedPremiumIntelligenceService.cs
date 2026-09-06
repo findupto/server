@@ -12,10 +12,10 @@ public sealed class AdvancedPremiumIntelligenceService(CoreDbContext db, AiProvi
     {
         historyDays = Math.Clamp(historyDays, 7, 365);
         targetDays = Math.Clamp(targetDays, 3, 60);
-        var from = DateTime.UtcNow.Date.AddDays(-historyDays);
+        var fromDate = DateTime.UtcNow.Date.AddDays(-historyDays);
         var sales = await (from item in db.OrderItems.AsNoTracking()
                            join order in db.Orders.AsNoTracking() on item.PosOrderId equals order.Id
-                           where order.CreatedAtUtc >= from && order.Status != "Cancelled"
+                           where order.CreatedAtUtc >= fromDate && order.Status != "Cancelled"
                            group item by new { item.ProductId, item.ProductName } into g
                            select new { g.Key.ProductId, g.Key.ProductName, units = g.Sum(x => x.Quantity) }).ToListAsync(ct);
         var stock = await db.ProductInventories.AsNoTracking().ToDictionaryAsync(x => x.ProductId, ct);
@@ -23,8 +23,9 @@ public sealed class AdvancedPremiumIntelligenceService(CoreDbContext db, AiProvi
         var plan = sales.Select(x =>
         {
             var averageDaily = x.units / (decimal)historyDays;
-            var available = stock.GetValueOrDefault(x.ProductId)?.QuantityOnHand ?? 0m;
-            var reorderLevel = stock.GetValueOrDefault(x.ProductId)?.ReorderLevel ?? 0m;
+            var inventory = stock.GetValueOrDefault(x.ProductId);
+            var available = inventory?.QuantityOnHand ?? 0m;
+            var reorderLevel = inventory?.ReorderLevel ?? 0m;
             var target = Math.Ceiling(averageDaily * targetDays);
             var recommended = Math.Max(0m, target - available);
             var urgency = available <= 0m ? "critical" : available <= reorderLevel ? "high" : recommended > 0m ? "planned" : "healthy";
@@ -36,10 +37,10 @@ public sealed class AdvancedPremiumIntelligenceService(CoreDbContext db, AiProvi
     public async Task<object> GetProfitabilityAsync(int days, CancellationToken ct)
     {
         days = Math.Clamp(days, 7, 365);
-        var from = DateTime.UtcNow.Date.AddDays(-days + 1);
+        var fromDate = DateTime.UtcNow.Date.AddDays(-days + 1);
         var rows = await (from item in db.OrderItems.AsNoTracking()
                           join order in db.Orders.AsNoTracking() on item.PosOrderId equals order.Id
-                          where order.CreatedAtUtc >= from && order.Status != "Cancelled"
+                          where order.CreatedAtUtc >= fromDate && order.Status != "Cancelled"
                           group item by item.ProductName into g
                           select new { product = g.Key, units = g.Sum(x => x.Quantity), revenue = g.Sum(x => x.LineTotal - x.DiscountAmount), cost = g.Sum(x => x.UnitCost * x.Quantity) }).ToListAsync(ct);
         var totalRevenue = rows.Sum(x => x.revenue);
@@ -52,9 +53,9 @@ public sealed class AdvancedPremiumIntelligenceService(CoreDbContext db, AiProvi
     {
         days = Math.Clamp(days, 30, 730);
         var now = DateTime.UtcNow;
-        var from = now.AddDays(-days);
+        var fromDate = now.AddDays(-days);
         var customers = await db.Customers.AsNoTracking().ToListAsync(ct);
-        var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= from && x.Status != "Cancelled").ToListAsync(ct);
+        var orders = await db.Orders.AsNoTracking().Where(x => x.CustomerId.HasValue && x.CreatedAtUtc >= fromDate && x.Status != "Cancelled").ToListAsync(ct);
         var opportunities = customers.Select(c =>
         {
             var customerOrders = orders.Where(x => x.CustomerId == c.Id).OrderByDescending(x => x.CreatedAtUtc).ToList();
@@ -72,8 +73,9 @@ public sealed class AdvancedPremiumIntelligenceService(CoreDbContext db, AiProvi
     public async Task<object> GenerateExecutiveAiBriefAsync(int days, CancellationToken ct)
     {
         days = Math.Clamp(days, 7, 365);
-        var executive = await new PremiumIntelligenceService(db).GetExecutiveDashboardAsync(days, ct);
-        var alerts = await new PremiumIntelligenceService(db).GetSmartAlertsAsync(days, ct);
+        var premium = new PremiumIntelligenceService(db);
+        var executive = await premium.GetExecutiveDashboardAsync(days, ct);
+        var alerts = await premium.GetSmartAlertsAsync(days, ct);
         var provider = await providers.ResolveAsync(ct);
         if (provider.Provider == "none")
             return new { success = false, provider = "none", message = "No AI provider configured. Premium deterministic analytics remain available.", executive, alerts };
