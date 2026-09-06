@@ -57,7 +57,7 @@ class PosApiClient {
   Future<List<dynamic>> staffOrders({String? status}) async=>getList('/api/orders${status == null ? '' : '?status=${Uri.encodeQueryComponent(status)}'}');
   Future<Map<String,dynamic>> createStaffOrder({int? customerId,int? tableId,required List<Map<String,dynamic>> items,String orderType='Counter',String notes='',String? clientOperationId}) async=>Map<String,dynamic>.from(await post('/api/orders',{'customerId':customerId,'tableId':tableId,'items':items,'orderType':orderType,'notes':notes,'clientOperationId':clientOperationId}));
   Future<Map<String,dynamic>> updateOrderStatus(int id,String status) async=>Map<String,dynamic>.from(await patch('/api/orders/$id/status',{'status':status}));
-  Future<Map<String,dynamic>> collectPayment(int id,{required double amountTendered,String method='Cash',String reference=''}) async=>Map<String,dynamic>.from(await post('/api/orders/$id/payment',{'amountTendered':amountTendered,'method':method,'reference':reference}));
+  Future<Map<String,dynamic>> collectPayment(int id,{required double amountTendered,String method='Cash',String reference='',String? clientOperationId}) async=>Map<String,dynamic>.from(await post('/api/orders/$id/payment',{'amountTendered':amountTendered,'method':method,'reference':reference,'clientOperationId':clientOperationId}));
   Future<List<dynamic>> orderPayments(int id) async=>getList('/api/orders/$id/payments');
   Future<List<dynamic>> tables({bool active=true}) async=>getList('/api/tables?active=$active');
   Future<List<dynamic>> discoverPrinters() async=>getList('/api/printers/discover');
