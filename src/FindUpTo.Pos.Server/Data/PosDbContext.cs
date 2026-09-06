@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FindUpTo.Pos.Server.Data;
 
-public class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(options)
+public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(options)
 {
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<BusinessSetting> BusinessSettings => Set<BusinessSetting>();
@@ -12,6 +12,7 @@ public class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(op
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<PosOrder> Orders => Set<PosOrder>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,7 +29,7 @@ public class PosDbContext(DbContextOptions<PosDbContext> options) : DbContext(op
         modelBuilder.Entity<PosOrder>().Property(x => x.Status).HasMaxLength(32);
         modelBuilder.Entity<OrderItem>().Property(x => x.ProductName).HasMaxLength(160);
         modelBuilder.Entity<OrderItem>().HasOne<PosOrder>().WithMany(x => x.Items).HasForeignKey(x => x.PosOrderId).OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<Payment>().Property(x => x.Method).HasMaxLength(32);
+        modelBuilder.Entity<Payment>().Property(x => x.Status).HasMaxLength(32);
     }
 }
-
-public sealed class CoreDbContext(DbContextOptions<PosDbContext> options) : PosDbContext(options);
