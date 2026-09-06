@@ -15,17 +15,35 @@ class PosApiClient {
     if(s.statusCode<200||s.statusCode>=300) throw Exception(d is String?d:'Request failed: ${s.statusCode}'); return d;
   }
   Future<List<dynamic>> getList(String path) async => List<dynamic>.from(await _request('GET', path));
+  Future<dynamic> get(String path) => _request('GET', path);
   Future<dynamic> patch(String path, Object body) => _request('PATCH', path, body: body);
   Future<dynamic> post(String path, Object body) => _request('POST', path, body: body);
+  Future<dynamic> put(String path, Object body) => _request('PUT', path, body: body);
+
+  Future<Map<String,dynamic>> login(String username, String password) async { final d=await _request('POST','/api/auth/login',body:{'username':username,'password':password}); await saveToken(d['token']); return Map<String,dynamic>.from(d); }
+  Future<Map<String,dynamic>> me() async=>Map<String,dynamic>.from(await _request('GET','/api/me'));
+
   Future<Map<String,dynamic>> createCustomerSession({String? name,String? phone,String? address}) async { final d=await _request('POST','/api/customer/session',body:{'name':name,'phone':phone,'address':address}); await saveToken(d['token']); return Map<String,dynamic>.from(d); }
   Future<List<dynamic>> products() async=>getList('/api/customer/products');
   Future<List<dynamic>> promotions() async=>getList('/api/customer/promotions');
   Future<List<dynamic>> orders() async=>getList('/api/customer/orders');
   Future<Map<String,dynamic>> createOrder({required List<Map<String,dynamic>> items,String orderType='Pickup',String? address,String? notes}) async=>Map<String,dynamic>.from(await _request('POST','/api/customer/orders',body:{'items':items,'orderType':orderType,'address':address,'notes':notes}));
   Future<Map<String,dynamic>> order(int id) async=>Map<String,dynamic>.from(await _request('GET','/api/customer/orders/$id'));
+
+  Future<List<dynamic>> staffOrders({String? status}) async=>getList('/api/orders${status == null ? '' : '?status=${Uri.encodeQueryComponent(status)}'}');
+  Future<Map<String,dynamic>> createStaffOrder({int? customerId,required List<Map<String,dynamic>> items,String orderType='Counter',String notes=''}) async=>Map<String,dynamic>.from(await post('/api/orders',{'customerId':customerId,'items':items,'orderType':orderType,'notes':notes}));
+  Future<Map<String,dynamic>> updateOrderStatus(int id,String status) async=>Map<String,dynamic>.from(await patch('/api/orders/$id/status',{'status':status}));
+  Future<Map<String,dynamic>> collectPayment(int id,{required double amountTendered,String method='Cash',String reference=''}) async=>Map<String,dynamic>.from(await post('/api/orders/$id/payment',{'amountTendered':amountTendered,'method':method,'reference':reference}));
+  Future<List<dynamic>> orderPayments(int id) async=>getList('/api/orders/$id/payments');
+
+  Future<List<dynamic>> categories() async=>getList('/api/categories');
+  Future<Map<String,dynamic>> createCategory(String name,{int sortOrder=0}) async=>Map<String,dynamic>.from(await post('/api/categories',{'name':name,'sortOrder':sortOrder}));
+  Future<Map<String,dynamic>> createProduct({required int categoryId,required String name,required double price,String description='',String imageUrl='',bool available=true}) async=>Map<String,dynamic>.from(await post('/api/products',{'categoryId':categoryId,'name':name,'price':price,'description':description,'imageUrl':imageUrl,'available':available}));
+  Future<Map<String,dynamic>> updateProduct(int id,{required int categoryId,required String name,required double price,String description='',String imageUrl='',bool available=true}) async=>Map<String,dynamic>.from(await put('/api/products/$id',{'categoryId':categoryId,'name':name,'price':price,'description':description,'imageUrl':imageUrl,'available':available}));
+
   Future<List<dynamic>> conversations() async=>getList('/api/messages/conversations');
   Future<List<dynamic>> messages(int id) async=>getList('/api/messages/$id');
-  Future<Map<String,dynamic>> createConversation(List<String> participants,{String? title}) async=>Map<String,dynamic>.from(await _request('POST','/api/messages/conversations',body:{'participants':participants,'title':title}));
-  Future<Map<String,dynamic>> sendMessage(int id,String text) async=>Map<String,dynamic>.from(await _request('POST','/api/messages/$id',body:{'text':text}));
+  Future<Map<String,dynamic>> createConversation(List<String> participants,{String? title}) async=>Map<String,dynamic>.from(await post('/api/messages/conversations',{'participants':participants,'title':title}));
+  Future<Map<String,dynamic>> sendMessage(int id,String text) async=>Map<String,dynamic>.from(await post('/api/messages/$id',{'text':text}));
   Future<void> markRead(int id) async{await _request('POST','/api/messages/$id/read');}
 }
