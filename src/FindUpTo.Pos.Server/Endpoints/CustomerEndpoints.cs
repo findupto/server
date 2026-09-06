@@ -1,9 +1,11 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using FindUpTo.Pos.Server.Data;
 using FindUpTo.Pos.Server.Hubs;
 using FindUpTo.Pos.Server.Models;
+using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -17,18 +19,41 @@ public static class CustomerEndpoints
         app.MapPost("/api/customer/session", async (CustomerSessionRequest input, CoreDbContext db, IConfiguration config) =>
         {
             if (string.IsNullOrWhiteSpace(input.Name) && string.IsNullOrWhiteSpace(input.Phone)) return Results.BadRequest("Customer name or phone is required.");
+            var phone = input.Phone?.Trim() ?? "";
             Customer? customer = null;
-            if (!string.IsNullOrWhiteSpace(input.Phone)) customer = await db.Customers.SingleOrDefaultAsync(x => x.Phone == input.Phone.Trim());
+            string? accessToken = null;
+
+            if (!string.IsNullOrWhiteSpace(phone))
+                customer = await db.Customers.SingleOrDefaultAsync(x => x.Phone == phone);
+
             if (customer is null)
             {
-                customer = new Customer { Name = input.Name?.Trim() ?? "", Phone = input.Phone?.Trim() ?? "", Address = input.Address?.Trim() ?? "", Notes = input.Notes?.Trim() ?? "" };
+                accessToken = CreateAccessToken();
+                customer = new Customer
+                {
+                    Name = input.Name?.Trim() ?? "",
+                    Phone = phone,
+                    Address = input.Address?.Trim() ?? "",
+                    Notes = input.Notes?.Trim() ?? "",
+                    CustomerAccessTokenHash = HashAccessToken(accessToken)
+                };
                 db.Customers.Add(customer);
                 await db.SaveChangesAsync();
             }
             else
             {
+                if (string.IsNullOrWhiteSpace(input.AccessToken) || string.IsNullOrWhiteSpace(customer.CustomerAccessTokenHash))
+                    return Results.Conflict(new { message = "This customer already exists. Provide the customer access token from the original registration." });
+
+                var suppliedHash = HashAccessToken(input.AccessToken);
+                var storedHash = Encoding.UTF8.GetBytes(customer.CustomerAccessTokenHash);
+                var candidateHash = Encoding.UTF8.GetBytes(suppliedHash);
+                if (storedHash.Length != candidateHash.Length || !CryptographicOperations.FixedTimeEquals(storedHash, candidateHash))
+                    return Results.Unauthorized();
+
                 if (!string.IsNullOrWhiteSpace(input.Name)) customer.Name = input.Name.Trim();
                 if (!string.IsNullOrWhiteSpace(input.Address)) customer.Address = input.Address.Trim();
+                if (!string.IsNullOrWhiteSpace(input.Notes)) customer.Notes = input.Notes.Trim();
                 await db.SaveChangesAsync();
             }
 
@@ -44,8 +69,8 @@ public static class CustomerEndpoints
                 new Claim("customer_id", customer.Id.ToString())
             };
             var token = new JwtSecurityToken(claims: claims, expires: DateTime.UtcNow.AddDays(30), signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
-            return Results.Ok(new CustomerSessionResponse(new JwtSecurityTokenHandler().WriteToken(token), customer.Id, customer.Name, customer.Phone, customer.Address));
-        }).AllowAnonymous();
+            return Results.Ok(new CustomerSessionResponse(new JwtSecurityTokenHandler().WriteToken(token), customer.Id, customer.Name, customer.Phone, customer.Address, accessToken));
+        }).AllowAnonymous().RequireRateLimiting("customer-session");
 
         app.MapGet("/api/customer/products", async (CoreDbContext db, int? categoryId) =>
         {
@@ -102,10 +127,18 @@ public static class CustomerEndpoints
             return order is null ? Results.NotFound() : Results.Ok(new CustomerOrderResponse(order.Id, order.OrderType, order.Status, order.Subtotal, order.Tax, order.Total, order.CreatedAtUtc, order.Items));
         }).RequireAuthorization(p => p.RequireRole("Customer"));
     }
+
+    private static string CreateAccessToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+    private static string HashAccessToken(string accessToken)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(accessToken));
+        return Convert.ToHexString(hash);
+    }
 }
 
-public sealed record CustomerSessionRequest(string? Name, string? Phone, string? Address = null, string? Notes = null);
-public sealed record CustomerSessionResponse(string Token, int CustomerId, string Name, string Phone, string Address);
+public sealed record CustomerSessionRequest(string? Name, string? Phone, string? Address = null, string? Notes = null, string? AccessToken = null);
+public sealed record CustomerSessionResponse(string Token, int CustomerId, string Name, string Phone, string Address, string? AccessToken);
 public sealed record CustomerOrderItemRequest(int ProductId, int Quantity, string? Notes = null);
 public sealed record CreateCustomerOrderRequest(List<CustomerOrderItemRequest> Items, string OrderType = "Pickup", string? Address = null, string? Notes = null);
 public sealed record CustomerOrderResponse(int Id, string OrderType, string Status, decimal Subtotal, decimal Tax, decimal Total, DateTime CreatedAtUtc, IReadOnlyCollection<OrderItem> Items);
