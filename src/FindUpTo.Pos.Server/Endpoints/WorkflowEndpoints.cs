@@ -20,57 +20,30 @@ public static class WorkflowEndpoints
             if (input.Items.Count > 100) return Results.BadRequest("An order cannot contain more than 100 line items.");
             if (!OrderTypes.Contains(input.OrderType?.Trim() ?? "", StringComparer.OrdinalIgnoreCase)) return Results.BadRequest("Invalid order type.");
             if (input.ClientOperationId?.Trim().Length > 128) return Results.BadRequest("ClientOperationId is too long.");
-
             var operationId = input.ClientOperationId?.Trim() ?? "";
             if (operationId.Length > 0)
             {
                 var duplicate = await db.SyncOperations.AsNoTracking().SingleOrDefaultAsync(x => x.ClientOperationId == operationId);
-                if (duplicate is not null)
-                {
-                    var existingOrder = await db.Orders.AsNoTracking().Include(x => x.Items).SingleAsync(x => x.Id == duplicate.OrderId);
-                    return Results.Ok(existingOrder);
-                }
+                if (duplicate is not null) return Results.Ok(await db.Orders.AsNoTracking().Include(x => x.Items).SingleAsync(x => x.Id == duplicate.OrderId));
             }
-
             if (input.CustomerId.HasValue && !await db.Customers.AnyAsync(x => x.Id == input.CustomerId.Value)) return Results.BadRequest("Customer not found.");
             if (input.TableId.HasValue && !await db.Tables.AnyAsync(x => x.Id == input.TableId.Value && x.Active)) return Results.BadRequest("Table not found or inactive.");
             if (input.OrderType.Equals("Dine In", StringComparison.OrdinalIgnoreCase) && !input.TableId.HasValue) return Results.BadRequest("A table is required for Dine In orders.");
             if (input.OrderType.Equals("Delivery", StringComparison.OrdinalIgnoreCase) && !input.CustomerId.HasValue) return Results.BadRequest("A customer is required for Delivery orders.");
-
             var ids = input.Items.Select(x => x.ProductId).Distinct().ToList();
             var products = await db.Products.AsNoTracking().Where(x => ids.Contains(x.Id) && x.Available).ToDictionaryAsync(x => x.Id);
             if (products.Count != ids.Count) return Results.BadRequest("One or more products are unavailable.");
-
-            var order = new PosOrder
-            {
-                CustomerId = input.CustomerId,
-                TableId = input.TableId,
-                CreatedByUsername = user.Identity?.Name ?? "unknown",
-                OrderType = OrderTypes.First(x => x.Equals(input.OrderType.Trim(), StringComparison.OrdinalIgnoreCase)),
-                Notes = input.Notes?.Trim() ?? ""
-            };
-
+            var order = new PosOrder { CustomerId = input.CustomerId, TableId = input.TableId, CreatedByUsername = user.Identity?.Name ?? "unknown", OrderType = OrderTypes.First(x => x.Equals(input.OrderType.Trim(), StringComparison.OrdinalIgnoreCase)), Notes = input.Notes?.Trim() ?? "" };
             foreach (var item in input.Items)
             {
                 if (item.Quantity <= 0 || item.Quantity > 10000) return Results.BadRequest("Quantity must be between 1 and 10000.");
                 var product = products[item.ProductId];
-                var lineTotal = Math.Round(product.Price * item.Quantity, 2);
-                order.Items.Add(new OrderItem
-                {
-                    ProductId = product.Id,
-                    ProductName = product.Name,
-                    UnitPrice = Math.Round(product.Price, 2),
-                    Quantity = item.Quantity,
-                    Notes = item.Notes?.Trim() ?? "",
-                    LineTotal = lineTotal
-                });
+                order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = Math.Round(product.Price, 2), Quantity = item.Quantity, Notes = item.Notes?.Trim() ?? "", LineTotal = Math.Round(product.Price * item.Quantity, 2) });
             }
-
             order.Subtotal = Math.Round(order.Items.Sum(x => x.LineTotal), 2);
             var taxRate = await db.BusinessSettings.Select(x => x.TaxPercent).SingleAsync();
             order.Tax = Math.Round(order.Subtotal * taxRate / 100m, 2);
             order.Total = Math.Round(order.Subtotal + order.Tax, 2);
-
             await using var tx = await db.Database.BeginTransactionAsync();
             db.Orders.Add(order);
             await db.SaveChangesAsync();
@@ -146,8 +119,8 @@ public static class WorkflowEndpoints
                 if (previous is not null) return Results.Ok(previous);
                 throw;
             }
-            var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
             await AuditEndpoints.WriteAsync(db, user, "Paid", "Payment", payment.Id.ToString(), $"OrderId={id};Method={payment.Method};Amount={payment.AmountPaid:0.00}");
+            var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
             await hub.Clients.All.SendAsync("payment.updated", new { orderId = id, paymentId = payment.Id, status = payment.Status, method = payment.Method, amountPaid = payment.AmountPaid, changeAmount = payment.ChangeAmount });
             return Results.Ok(payment);
         }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
@@ -156,7 +129,7 @@ public static class WorkflowEndpoints
         {
             if (!await db.Orders.AnyAsync(x => x.Id == id)) return Results.NotFound();
             return Results.Ok(await db.Payments.AsNoTracking().Where(x => x.PosOrderId == id).OrderByDescending(x => x.CreatedAtUtc).ToListAsync());
-        }).RequireAuthorization();
+        }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
         app.MapGet("/api/kitchen/orders", async (CoreDbContext db, string? status) =>
         {
