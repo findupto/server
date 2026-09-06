@@ -20,17 +20,15 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("POS_JWT_KEY");
-if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
-    jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32) jwtKey = "CHANGE_THIS_DEVELOPMENT_KEY_TO_A_LONG_RANDOM_SECRET_32CHARS";
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuerSigningKey = true, IssuerSigningKey = signingKey,
-        ValidateIssuer = false, ValidateAudience = false, ValidateLifetime = true,
-        NameClaimType = ClaimTypes.Name, RoleClaimType = ClaimTypes.Role
+        ValidateIssuerSigningKey = true, IssuerSigningKey = signingKey, ValidateIssuer = false, ValidateAudience = false,
+        ValidateLifetime = true, NameClaimType = ClaimTypes.Name, RoleClaimType = ClaimTypes.Role
     };
     options.Events = new JwtBearerEvents
     {
@@ -71,8 +69,8 @@ app.MapGet("/api/settings", async (CoreDbContext db) => Results.Ok(await db.Busi
 app.MapPut("/api/settings", async (BusinessSetting input, CoreDbContext db) =>
 {
     var current = await db.BusinessSettings.SingleAsync();
-    current.BusinessName = input.BusinessName.Trim(); current.Phone = input.Phone.Trim(); current.Address = input.Address.Trim();
-    current.TaxPercent = input.TaxPercent; current.CurrencyCode = input.CurrencyCode.Trim().ToUpperInvariant(); current.CurrencySymbol = input.CurrencySymbol.Trim(); current.UpdatedAtUtc = DateTime.UtcNow;
+    current.BusinessName = input.BusinessName.Trim(); current.Phone = input.Phone.Trim(); current.Address = input.Address.Trim(); current.TaxPercent = input.TaxPercent;
+    current.CurrencyCode = input.CurrencyCode.Trim().ToUpperInvariant(); current.CurrencySymbol = input.CurrencySymbol.Trim(); current.UpdatedAtUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(); return Results.Ok(current);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager"));
 
@@ -80,14 +78,13 @@ app.MapGet("/api/categories", async (CoreDbContext db) => Results.Ok(await db.Ca
 app.MapPost("/api/categories", async (CategoryRequest input, CoreDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name)) return Results.BadRequest("Category name is required.");
-    var item = new Category { Name = input.Name.Trim(), SortOrder = input.SortOrder };
-    db.Categories.Add(item); await db.SaveChangesAsync(); return Results.Created($"/api/categories/{item.Id}", item);
+    var item = new Category { Name = input.Name.Trim(), SortOrder = input.SortOrder }; db.Categories.Add(item); await db.SaveChangesAsync();
+    return Results.Created($"/api/categories/{item.Id}", item);
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin"));
 
 app.MapGet("/api/products", async (CoreDbContext db, int? categoryId) =>
 {
-    var q = db.Products.AsNoTracking().Where(x => x.Available);
-    if (categoryId.HasValue) q = q.Where(x => x.CategoryId == categoryId.Value);
+    var q = db.Products.AsNoTracking().Where(x => x.Available); if (categoryId.HasValue) q = q.Where(x => x.CategoryId == categoryId.Value);
     return Results.Ok(await q.OrderBy(x => x.Name).ToListAsync());
 }).AllowAnonymous();
 app.MapPost("/api/products", async (ProductRequest input, CoreDbContext db) =>
@@ -106,15 +103,14 @@ app.MapPut("/api/products/{id:int}", async (int id, ProductRequest input, CoreDb
 
 app.MapGet("/api/customers", async (CoreDbContext db, string? search) =>
 {
-    var q = db.Customers.AsNoTracking();
-    if (!string.IsNullOrWhiteSpace(search)) q = q.Where(x => x.Name.Contains(search) || x.Phone.Contains(search));
+    var q = db.Customers.AsNoTracking(); if (!string.IsNullOrWhiteSpace(search)) q = q.Where(x => x.Name.Contains(search) || x.Phone.Contains(search));
     return Results.Ok(await q.OrderByDescending(x => x.CreatedAtUtc).Take(100).ToListAsync());
 }).RequireAuthorization();
 app.MapPost("/api/customers", async (CustomerRequest input, CoreDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(input.Name) && string.IsNullOrWhiteSpace(input.Phone)) return Results.BadRequest("Customer name or phone is required.");
-    var item = new Customer { Name = input.Name.Trim(), Phone = input.Phone.Trim(), Address = input.Address.Trim(), Notes = input.Notes.Trim() };
-    db.Customers.Add(item); await db.SaveChangesAsync(); return Results.Created($"/api/customers/{item.Id}", item);
+    var item = new Customer { Name = input.Name.Trim(), Phone = input.Phone.Trim(), Address = input.Address.Trim(), Notes = input.Notes.Trim() }; db.Customers.Add(item); await db.SaveChangesAsync();
+    return Results.Created($"/api/customers/{item.Id}", item);
 }).RequireAuthorization();
 
 app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db) =>
@@ -131,28 +127,21 @@ app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user
         var product = products[line.ProductId];
         order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = line.Quantity, Notes = line.Notes.Trim(), LineTotal = product.Price * line.Quantity });
     }
-    order.Subtotal = order.Items.Sum(x => x.LineTotal);
-    var taxRate = await db.BusinessSettings.Select(x => x.TaxPercent).SingleAsync();
-    order.Tax = Math.Round(order.Subtotal * taxRate / 100m, 2);
-    order.Total = order.Subtotal + order.Tax;
-    db.Orders.Add(order); await db.SaveChangesAsync();
-    await NotifyOrder(app, order);
+    order.Subtotal = order.Items.Sum(x => x.LineTotal); var taxRate = await db.BusinessSettings.Select(x => x.TaxPercent).SingleAsync();
+    order.Tax = Math.Round(order.Subtotal * taxRate / 100m, 2); order.Total = order.Subtotal + order.Tax;
+    db.Orders.Add(order); await db.SaveChangesAsync(); await NotifyOrder(app, order);
     return Results.Created($"/api/orders/{order.Id}", await db.Orders.AsNoTracking().Include(x => x.Items).SingleAsync(x => x.Id == order.Id));
 }).RequireAuthorization();
 
 app.MapGet("/api/orders", async (CoreDbContext db, string? status) =>
 {
-    var q = db.Orders.AsNoTracking().Include(x => x.Items).AsQueryable();
-    if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status);
+    var q = db.Orders.AsNoTracking().Include(x => x.Items).AsQueryable(); if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.Status == status);
     return Results.Ok(await q.OrderByDescending(x => x.CreatedAtUtc).Take(200).ToListAsync());
 }).RequireAuthorization();
-
 app.MapGet("/api/orders/{id:int}", async (int id, CoreDbContext db) =>
 {
-    var order = await db.Orders.AsNoTracking().Include(x => x.Items).SingleOrDefaultAsync(x => x.Id == id);
-    return order is null ? Results.NotFound() : Results.Ok(order);
+    var order = await db.Orders.AsNoTracking().Include(x => x.Items).SingleOrDefaultAsync(x => x.Id == id); return order is null ? Results.NotFound() : Results.Ok(order);
 }).RequireAuthorization();
-
 app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequest input, CoreDbContext db) =>
 {
     var allowed = new[] { "New", "Accepted", "Preparing", "Ready", "OutForDelivery", "Served", "Completed", "Cancelled" };
@@ -163,6 +152,7 @@ app.MapPatch("/api/orders/{id:int}/status", async (int id, UpdateOrderStatusRequ
 }).RequireAuthorization(p => p.RequireRole("Owner", "Manager", "Admin", "Counter"));
 
 app.MapWorkflowEndpoints();
+app.MapPromotionEndpoints();
 app.MapHub<PosHub>("/hubs/pos");
 app.Run();
 
