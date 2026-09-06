@@ -18,21 +18,41 @@ public static class WorkflowEndpoints
             var order = await db.Orders.SingleOrDefaultAsync(x => x.Id == id);
             if (order is null) return Results.NotFound();
             if (order.Status.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest("Cancelled orders cannot be paid.");
+
+            var clientOperationId = input.ClientOperationId?.Trim() ?? "";
+            if (clientOperationId.Length > 0)
+            {
+                if (clientOperationId.Length > 128) return Results.BadRequest("ClientOperationId is too long.");
+                var previous = await db.Payments.AsNoTracking().SingleOrDefaultAsync(x => x.ClientOperationId == clientOperationId);
+                if (previous is not null) return Results.Ok(previous);
+            }
+
             if (await db.Payments.AnyAsync(x => x.PosOrderId == id && x.Status == "Paid")) return Results.Conflict("Order is already paid.");
             if (input.AmountTendered < order.Total) return Results.BadRequest($"Insufficient payment. Order total is {order.Total:0.00}.");
             var method = input.Method.Trim();
             var payment = new Payment
             {
                 PosOrderId = id,
-                AmountTendered = input.AmountTendered,
-                AmountPaid = order.Total,
+                AmountTendered = Math.Round(input.AmountTendered, 2),
+                AmountPaid = Math.Round(order.Total, 2),
                 ChangeAmount = method.Equals("Cash", StringComparison.OrdinalIgnoreCase) ? Math.Round(input.AmountTendered - order.Total, 2) : 0m,
                 Method = method,
                 Reference = input.Reference?.Trim() ?? "",
+                ClientOperationId = clientOperationId,
                 CollectedByUsername = user.Identity?.Name ?? "unknown"
             };
             db.Payments.Add(payment);
-            await db.SaveChangesAsync();
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException) when (clientOperationId.Length > 0)
+            {
+                var previous = await db.Payments.AsNoTracking().SingleOrDefaultAsync(x => x.ClientOperationId == clientOperationId);
+                if (previous is not null) return Results.Ok(previous);
+                throw;
+            }
+
             var hub = app.Services.GetRequiredService<IHubContext<PosHub>>();
             await hub.Clients.All.SendAsync("payment.updated", new { orderId = id, paymentId = payment.Id, status = payment.Status, method = payment.Method, amountPaid = payment.AmountPaid, changeAmount = payment.ChangeAmount });
             return Results.Ok(payment);
