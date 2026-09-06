@@ -20,12 +20,8 @@ class PosApiClient {
     final s = await r.send();
     final text = await s.stream.bytesToString();
     dynamic d;
-    if (text.isNotEmpty) {
-      try { d = jsonDecode(text); } catch (_) { d = text; }
-    }
-    if (s.statusCode < 200 || s.statusCode >= 300) {
-      throw Exception(d is String ? d : 'Request failed: ${s.statusCode}');
-    }
+    if (text.isNotEmpty) { try { d = jsonDecode(text); } catch (_) { d = text; } }
+    if (s.statusCode < 200 || s.statusCode >= 300) throw Exception(d is String ? d : 'Request failed: ${s.statusCode}');
     return d;
   }
 
@@ -52,6 +48,9 @@ class PosApiClient {
   Future<Map<String,dynamic>> collectPayment(int id,{required double amountTendered,String method='Cash',String reference=''}) async=>Map<String,dynamic>.from(await post('/api/orders/$id/payment',{'amountTendered':amountTendered,'method':method,'reference':reference}));
   Future<List<dynamic>> orderPayments(int id) async=>getList('/api/orders/$id/payments');
   Future<List<dynamic>> tables({bool active=true}) async=>getList('/api/tables?active=$active');
+  Future<List<dynamic>> discoverPrinters() async=>getList('/api/printers/discover');
+  Future<Map<String,dynamic>> selectPrinter(String documentType) async=>Map<String,dynamic>.from(await post('/api/printers/select',{'documentType':documentType}));
+  Future<Map<String,dynamic>> printReceipt(int orderId) async=>Map<String,dynamic>.from(await post('/api/printers/print-receipt/$orderId',{}));
   Future<dynamic> syncPull({String? since}) => _request('GET','/api/sync/pull${since == null ? '' : '?since=${Uri.encodeQueryComponent(since)}'}');
   Future<Map<String,dynamic>> syncPushOrders(List<Map<String,dynamic>> orders) async=>Map<String,dynamic>.from(await post('/api/sync/push-orders', orders));
   Future<List<dynamic>> syncConflicts() async=>getList('/api/sync/conflicts');
