@@ -15,7 +15,7 @@ public static class WorkflowEndpoints
 
     public static void MapWorkflowEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub, PromotionPricingService pricing) =>
+        app.MapPost("/api/orders", async (CreateOrderRequest input, ClaimsPrincipal user, CoreDbContext db, IHubContext<PosHub> hub, PromotionPricingService pricing, InventoryService inventory) =>
         {
             if (input.Items is null || input.Items.Count == 0) return Results.BadRequest("Order must contain at least one item.");
             if (input.Items.Count > 100) return Results.BadRequest("An order cannot contain more than 100 line items.");
@@ -45,6 +45,12 @@ public static class WorkflowEndpoints
             await using var tx = await db.Database.BeginTransactionAsync();
             db.Orders.Add(order);
             await db.SaveChangesAsync();
+            var inventoryResult = await inventory.DeductForSaleAsync(order);
+            if (!inventoryResult.Success)
+            {
+                await tx.RollbackAsync();
+                return Results.Conflict(new { message = "Insufficient stock.", productId = inventoryResult.ProductId, productName = inventoryResult.ProductName, required = inventoryResult.Required, available = inventoryResult.Available });
+            }
             if (operationId.Length > 0)
             {
                 db.SyncOperations.Add(new SyncOperation { ClientOperationId = operationId, OrderId = order.Id, CreatedByUsername = user.Identity?.Name ?? "unknown" });
