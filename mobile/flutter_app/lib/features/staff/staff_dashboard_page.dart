@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import 'product_management_page.dart';
+import 'ai_operator_page.dart';
 
 class StaffDashboardPage extends StatelessWidget {
   const StaffDashboardPage({super.key, required this.api, required this.role});
@@ -11,7 +12,9 @@ class StaffDashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final r = role.toLowerCase();
     final canManageProducts = r == 'owner' || r == 'manager' || r == 'admin';
+    final canUseAi = r == 'owner' || r == 'manager' || r == 'admin' || r == 'counter';
     final actions = <_Action>[
+      if (canUseAi) const _Action('AI Operator', Icons.auto_awesome, 'AI_OPERATOR'),
       if (r == 'kitchen') const _Action('Kitchen Orders', Icons.restaurant, '/api/kitchen/orders'),
       if (r == 'waiter') const _Action('Waiter Orders', Icons.room_service, '/api/waiter/orders'),
       if (r == 'rider') const _Action('Deliveries', Icons.delivery_dining, '/api/rider/deliveries'),
@@ -31,7 +34,9 @@ class StaffDashboardPage extends StatelessWidget {
         itemCount: actions.length,
         itemBuilder: (_, i) => Card(child: InkWell(onTap: () {
           final a=actions[i];
-          if(a.path=='PRODUCT_MANAGEMENT'){Navigator.push(context,MaterialPageRoute(builder:(_)=>ProductManagementPage(api:api)));}else{Navigator.push(context,MaterialPageRoute(builder:(_)=>StaffListPage(api:api,title:a.title,path:a.path)));}
+          if(a.path=='PRODUCT_MANAGEMENT'){Navigator.push(context,MaterialPageRoute(builder:(_)=>ProductManagementPage(api:api)));}
+          else if(a.path=='AI_OPERATOR'){Navigator.push(context,MaterialPageRoute(builder:(_)=>AiOperatorPage(api:api,role:role)));}
+          else{Navigator.push(context,MaterialPageRoute(builder:(_)=>StaffListPage(api:api,title:a.title,path:a.path)));}
         }, child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(actions[i].icon,size:34),const SizedBox(height:8),Text(actions[i].title)]))))),
       ),
     );
