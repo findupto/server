@@ -115,6 +115,9 @@ public static class CustomerEndpoints
             if (customer is null) return Results.Unauthorized();
             if (!string.IsNullOrWhiteSpace(input.Address)) customer.Address = input.Address.Trim();
             var orderType = string.Equals(input.OrderType, "Delivery", StringComparison.OrdinalIgnoreCase) ? "Delivery" : "Pickup";
+            if (orderType == "Delivery" && string.IsNullOrWhiteSpace(input.Address) && string.IsNullOrWhiteSpace(customer.Address)) return Results.BadRequest("A delivery address is required.");
+            if (input.DestinationLatitude is < -90 or > 90 || input.DestinationLongitude is < -180 or > 180) return Results.BadRequest("Invalid destination coordinates.");
+            if (input.DestinationLatitude.HasValue != input.DestinationLongitude.HasValue) return Results.BadRequest("Both destination latitude and longitude are required together.");
             var order = new PosOrder { CustomerId = customerId, CreatedByUsername = user.Identity?.Name ?? $"customer:{customerId}", OrderType = orderType, Notes = input.Notes?.Trim() ?? "" };
             foreach (var line in input.Items)
             {
@@ -128,6 +131,19 @@ public static class CustomerEndpoints
             order.Total = order.Subtotal + order.Tax;
             db.Orders.Add(order);
             await db.SaveChangesAsync();
+            if (orderType == "Delivery")
+            {
+                db.DeliveryTrackings.Add(new DeliveryTracking
+                {
+                    OrderId = order.Id,
+                    TrackingCode = await CreateTrackingCodeAsync(db),
+                    Status = order.Status,
+                    DeliveryAddress = input.Address?.Trim() ?? customer.Address,
+                    DestinationLatitude = input.DestinationLatitude,
+                    DestinationLongitude = input.DestinationLongitude
+                });
+                await db.SaveChangesAsync();
+            }
             await hub.Clients.All.SendAsync("order.updated", new { orderId = order.Id, customerId, status = order.Status, total = order.Total, updatedAtUtc = order.UpdatedAtUtc });
             return Results.Created($"/api/customer/orders/{order.Id}", new CustomerOrderResponse(order.Id, orderType, order.Status, order.Subtotal, order.Tax, order.Total, order.CreatedAtUtc, order.Items));
         }).RequireAuthorization(p => p.RequireRole("Customer"));
@@ -147,6 +163,16 @@ public static class CustomerEndpoints
         }).RequireAuthorization(p => p.RequireRole("Customer"));
     }
 
+    private static async Task<string> CreateTrackingCodeAsync(CoreDbContext db)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var code = $"FU{Convert.ToHexString(RandomNumberGenerator.GetBytes(6))}";
+            if (!await db.DeliveryTrackings.AnyAsync(x => x.TrackingCode == code)) return code;
+        }
+        throw new InvalidOperationException("Unable to allocate a unique delivery tracking code.");
+    }
+
     private static string CreateAccessToken() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
     private static string HashAccessToken(string accessToken)
@@ -159,5 +185,5 @@ public static class CustomerEndpoints
 public sealed record CustomerSessionRequest(string? Name, string? Phone, string? Address = null, string? Notes = null, string? AccessToken = null);
 public sealed record CustomerSessionResponse(string Token, int CustomerId, string Name, string Phone, string Address, string? AccessToken);
 public sealed record CustomerOrderItemRequest(int ProductId, int Quantity, string? Notes = null);
-public sealed record CreateCustomerOrderRequest(List<CustomerOrderItemRequest> Items, string OrderType = "Pickup", string? Address = null, string? Notes = null);
+public sealed record CreateCustomerOrderRequest(List<CustomerOrderItemRequest> Items, string OrderType = "Pickup", string? Address = null, string? Notes = null, double? DestinationLatitude = null, double? DestinationLongitude = null);
 public sealed record CustomerOrderResponse(int Id, string OrderType, string Status, decimal Subtotal, decimal Tax, decimal Total, DateTime CreatedAtUtc, IReadOnlyCollection<OrderItem> Items);
