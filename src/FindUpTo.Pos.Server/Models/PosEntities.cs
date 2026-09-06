@@ -1,7 +1,7 @@
 namespace FindUpTo.Pos.Server.Models;
 
 public sealed class Category { public int Id { get; set; } public string Name { get; set; } = ""; public bool Active { get; set; } = true; public int SortOrder { get; set; } }
-public sealed class Product { public int Id { get; set; } public int CategoryId { get; set; } public string Name { get; set; } = ""; public string Description { get; set; } = ""; public decimal Price { get; set; } public string ImageUrl { get; set; } = ""; public bool Available { get; set; } = true; public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow; }
+public sealed class Product { public int Id { get; set; } public int CategoryId { get; set; } public string Name { get; set; } = ""; public string Description { get; set; } = ""; public decimal Price { get; set; } public string ImageUrl { get; set; } = ""; public string Barcode { get; set; } = ""; public bool Available { get; set; } = true; public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow; }
 public sealed class Customer { public int Id { get; set; } public string Name { get; set; } = ""; public string Phone { get; set; } = ""; public string Address { get; set; } = ""; public string Notes { get; set; } = ""; public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow; }
 public sealed class PosTable { public int Id { get; set; } public string Name { get; set; } = ""; public int Capacity { get; set; } = 2; public string Status { get; set; } = "Available"; public bool Active { get; set; } = true; public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow; }
 public sealed class PosOrder { public int Id { get; set; } public int? CustomerId { get; set; } public int? TableId { get; set; } public string CreatedByUsername { get; set; } = ""; public string OrderType { get; set; } = "Counter"; public string Status { get; set; } = "New"; public decimal Subtotal { get; set; } public decimal Tax { get; set; } public decimal Total { get; set; } public string Notes { get; set; } = ""; public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow; public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow; public List<OrderItem> Items { get; set; } = []; }
@@ -13,6 +13,7 @@ public sealed record ProductRequest(int CategoryId, string Name, string Descript
 public sealed record CustomerRequest(string Name, string Phone, string Address, string Notes);
 public sealed record TableRequest(string Name, int Capacity = 2, bool Active = true);
 public sealed record TableStatusRequest(string Status);
+public sealed record BarcodeRequest(string Barcode);
 public sealed record OrderItemRequest(int ProductId, int Quantity, string Notes = "");
 public sealed record CreateOrderRequest(int? CustomerId, string OrderType, List<OrderItemRequest> Items, string Notes = "", int? TableId = null);
 public sealed record UpdateOrderStatusRequest(string Status);
