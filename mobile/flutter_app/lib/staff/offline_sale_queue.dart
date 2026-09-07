@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../core/api_client.dart';
@@ -115,15 +114,26 @@ class OfflineSaleQueue {
   }
 
   Future<void> _markCompleted(Database db, String id) async {
-    await db.update(_table, {'state': 'completed', 'updated_at': DateTime.now().millisecondsSinceEpoch, 'last_error': null}, where: 'client_operation_id = ?', whereArgs: [id]);
+    await db.update(_table, {
+      'state': 'completed',
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+      'last_error': null,
+    }, where: 'client_operation_id = ?', whereArgs: [id]);
   }
 
   Future<void> _markConflict(Database db, String id, String message) async {
-    await db.update(_table, {'state': 'conflict', 'updated_at': DateTime.now().millisecondsSinceEpoch, 'last_error': message}, where: 'client_operation_id = ?', whereArgs: [id]);
+    await db.update(_table, {
+      'state': 'conflict',
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+      'last_error': message,
+    }, where: 'client_operation_id = ?', whereArgs: [id]);
   }
 
   Future<void> _markError(Database db, String id, Object error) async {
-    await db.update(_table, {'last_error': '$error', 'updated_at': DateTime.now().millisecondsSinceEpoch}, where: 'client_operation_id = ?', whereArgs: [id]);
+    await db.update(_table, {
+      'last_error': '$error',
+      'updated_at': DateTime.now().millisecondsSinceEpoch,
+    }, where: 'client_operation_id = ?', whereArgs: [id]);
   }
 
   Future<SyncQueueResult> sync(PosApiClient api) async {
