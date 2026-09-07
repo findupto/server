@@ -54,6 +54,12 @@ if errorlevel 1 exit /b 1
 cd mobile\flutter_app
 call flutter create . --platforms=android,windows
 if errorlevel 1 exit /b 1
+rem The Android project is regenerated on each clean checkout. Disable Kotlin
+rem incremental caches and the Kotlin daemon because Windows mapped-file cache
+rem locking can fail when the project and Pub cache live on different drives.
+if not exist "android\gradle.properties" type nul > "android\gradle.properties"
+>>"android\gradle.properties" echo kotlin.incremental=false
+>>"android\gradle.properties" echo kotlin.compiler.execution.strategy=in-process
 call flutter clean
 if errorlevel 1 exit /b 1
 call flutter pub get
@@ -78,8 +84,8 @@ if exist "%LOCALAPPDATA%\Android\sdk\ndk" (
     )
   )
 )
-rem Avoid Kotlin incremental-cache path errors when the project and Pub cache
-rem are on different Windows drives (for example D:\server and C:\Users\...).
+rem Stop any stale Kotlin/Gradle daemon before the release APK compilation.
+if exist "android\gradlew.bat" call android\gradlew.bat --stop >nul 2>nul
 call flutter clean
 if errorlevel 1 exit /b 1
 call flutter pub get
