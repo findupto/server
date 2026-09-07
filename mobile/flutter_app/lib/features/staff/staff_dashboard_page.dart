@@ -48,60 +48,62 @@ class StaffDashboardPage extends StatelessWidget {
           mainAxisSpacing: 12,
         ),
         itemCount: actions.length,
-        itemBuilder: (_, i) => Card(
-          child: InkWell(
-            onTap: () {
-              final action = actions[i];
-              if (action.path == 'PRODUCT_MANAGEMENT') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => ProductManagementPage(api: api)),
-                );
-              } else if (action.path == 'AI_OPERATOR') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => AiOperatorPage(api: api, role: role)),
-                );
-              } else if (action.path == 'AI_CONFIG') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => AiConfigurationPage(api: api)),
-                );
-              } else if (action.path == 'RIDER_GPS') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => RiderTrackingPage(api: api)),
-                );
-              } else if (action.path == 'DELIVERY_MAP') {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => DeliveryMapPage(api: api)),
-                );
-              } else {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => StaffListPage(
-                      api: api,
-                      title: action.title,
-                      path: action.path,
+        itemBuilder: (_, i) {
+          final action = actions[i];
+          return Card(
+            child: InkWell(
+              onTap: () {
+                if (action.path == 'PRODUCT_MANAGEMENT') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ProductManagementPage(api: api)),
+                  );
+                } else if (action.path == 'AI_OPERATOR') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => AiOperatorPage(api: api, role: role)),
+                  );
+                } else if (action.path == 'AI_CONFIG') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => AiConfigurationPage(api: api)),
+                  );
+                } else if (action.path == 'RIDER_GPS') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => RiderTrackingPage(api: api)),
+                  );
+                } else if (action.path == 'DELIVERY_MAP') {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => DeliveryMapPage(api: api)),
+                  );
+                } else {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => StaffListPage(
+                        api: api,
+                        title: action.title,
+                        path: action.path,
+                      ),
                     ),
-                  ),
-                );
-              }
-            },
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(action.icon, size: 34),
-                  const SizedBox(height: 8),
-                  Text(action.title),
-                ],
+                  );
+                }
+              },
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(action.icon, size: 34),
+                    const SizedBox(height: 8),
+                    Text(action.title),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
