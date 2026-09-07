@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '../..')
-$out = Join-Path $root 'artifacts/windows-server'
+$out = Join-Path $root 'artifacts/windows-server-published'
 
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Path $out | Out-Null
