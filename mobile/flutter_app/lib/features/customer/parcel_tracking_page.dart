@@ -5,11 +5,151 @@ import 'package:latlong2/latlong.dart';
 import '../../core/api_client.dart';
 import '../../core/realtime.dart';
 
-class ParcelTrackingPage extends StatefulWidget { const ParcelTrackingPage({super.key,required this.api,this.initialTrackingCode}); final PosApiClient api; final String? initialTrackingCode; @override State<ParcelTrackingPage> createState()=>_ParcelTrackingPageState(); }
-class _ParcelTrackingPageState extends State<ParcelTrackingPage>{final code=TextEditingController();Map<String,dynamic>? data;Map<String,dynamic>? route;String? error;bool loading=false;PosRealtime? realtime;StreamSubscription? events;Timer? routeTimer;
- @override void initState(){super.initState();if(widget.initialTrackingCode!=null){code.text=widget.initialTrackingCode!;load();}}
- @override void dispose(){events?.cancel();routeTimer?.cancel();realtime?.dispose();code.dispose();super.dispose();}
- Future<void> load()async{final value=code.text.trim();if(value.isEmpty)return;setState(()=>loading=true);try{data=await widget.api.trackParcel(value);error=null;realtime??=PosRealtime(widget.api);await realtime!.connect();await realtime!.joinTracking(value);events??=realtime!.events.stream.listen((event){if(event['type']=='location.updated'&&event['data'] is Map){final d=Map<String,dynamic>.from(event['data']);if(d['trackingCode']==value&&mounted){setState(()=>data={...data!, 'location':{'latitude':d['latitude'],'longitude':d['longitude'],'accuracyMeters':d['accuracyMeters'],'speedMetersPerSecond':d['speedMetersPerSecond'],'headingDegrees':d['headingDegrees'],'recordedAtUtc':d['recordedAtUtc']}});loadRoute();}}});routeTimer?.cancel();routeTimer=Timer.periodic(const Duration(seconds:30),(_)=>loadRoute());await loadRoute();}catch(e){error=e.toString();data=null;route=null;}if(mounted)setState(()=>loading=false);}
- Future<void> loadRoute()async{if(!mounted||data==null)return;try{final r=await widget.api.deliveryRoute(code.text.trim());if(mounted)setState(()=>route=r);}catch(_){}}
- @override Widget build(BuildContext context){final location=data?['location'];final lat=(location?['latitude'] as num?)?.toDouble();final lon=(location?['longitude'] as num?)?.toDouble();final destinationLat=(data?['destinationLatitude'] as num?)?.toDouble();final destinationLon=(data?['destinationLongitude'] as num?)?.toDouble();final geometry=route?['geometry'] is List?List.from(route!['geometry']):<dynamic>[];final line=geometry.map((p)=>LatLng((p[0] as num).toDouble(),(p[1] as num).toDouble())).toList();final center=lat!=null&&lon!=null?LatLng(lat,lon):destinationLat!=null&&destinationLon!=null?LatLng(destinationLat,destinationLon):const LatLng(31.4504,73.1385);final eta=route?['etaUtc'];return Scaffold(appBar:AppBar(title:const Text('Track Parcel')),body:Column(children:[Padding(padding:const EdgeInsets.all(12),child:Row(children:[Expanded(child:TextField(controller:code,decoration:const InputDecoration(labelText:'Tracking code',border:OutlineInputBorder()))),const SizedBox(width:8),FilledButton(onPressed:loading?null:load,child:const Text('Track'))])),if(error!=null)Padding(padding:const EdgeInsets.all(12),child:Text(error!,style:TextStyle(color:Theme.of(context).colorScheme.error))),if(data!=null)ListTile(title:Text('Status: ${data!['status']}'),subtitle:Text('Rider: ${data!['rider']?['username'] ?? 'Not assigned'} • Updated ${data!['updatedAtUtc']}')),if(route?['available']==true)Padding(padding:const EdgeInsets.symmetric(horizontal:12),child:Text('ETA ${eta ?? 'calculating'} • ${(((route!['distanceMeters'] as num)/1000)).toStringAsFixed(1)} km')),Expanded(child:FlutterMap(options:MapOptions(initialCenter:center,initialZoom:14),children:[TileLayer(urlTemplate:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',userAgentPackageName:'com.findupto.pos'),if(line.length>1)PolylineLayer(polylines:[Polyline(points:line,strokeWidth:4)]),if(lat!=null&&lon!=null)MarkerLayer(markers:[Marker(point:LatLng(lat,lon),width:48,height:48,child:const Icon(Icons.delivery_dining,size:42))]),if(destinationLat!=null&&destinationLon!=null)MarkerLayer(markers:[Marker(point:LatLng(destinationLat,destinationLon),width:48,height:48,child:const Icon(Icons.location_pin,size:42))])]))]));}
+class ParcelTrackingPage extends StatefulWidget {
+  const ParcelTrackingPage({super.key, required this.api, this.initialTrackingCode});
+  final PosApiClient api;
+  final String? initialTrackingCode;
+  @override
+  State<ParcelTrackingPage> createState() => _ParcelTrackingPageState();
+}
+
+class _ParcelTrackingPageState extends State<ParcelTrackingPage> {
+  final code = TextEditingController();
+  Map<String, dynamic>? data;
+  String? error;
+  bool loading = false;
+  PosRealtime? realtime;
+  StreamSubscription? events;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialTrackingCode != null) {
+      code.text = widget.initialTrackingCode!;
+      load();
+    }
+  }
+
+  @override
+  void dispose() {
+    events?.cancel();
+    realtime?.dispose();
+    code.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    final value = code.text.trim();
+    if (value.isEmpty) return;
+    setState(() => loading = true);
+    try {
+      data = await widget.api.trackParcel(value);
+      error = null;
+      realtime ??= PosRealtime(widget.api);
+      await realtime!.connect();
+      await realtime!.joinTracking(value);
+      events ??= realtime!.events.stream.listen((event) {
+        if (event['type'] == 'location.updated' && event['data'] is Map) {
+          final update = Map<String, dynamic>.from(event['data']);
+          if (update['trackingCode'] == value && mounted) {
+            setState(() => data = {
+              ...data!,
+              'location': {
+                'latitude': update['latitude'],
+                'longitude': update['longitude'],
+                'accuracyMeters': update['accuracyMeters'],
+                'speedMetersPerSecond': update['speedMetersPerSecond'],
+                'headingDegrees': update['headingDegrees'],
+                'recordedAtUtc': update['recordedAtUtc'],
+              },
+            });
+          }
+        }
+      });
+    } catch (e) {
+      error = e.toString();
+      data = null;
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final location = data?['location'];
+    final lat = (location?['latitude'] as num?)?.toDouble();
+    final lon = (location?['longitude'] as num?)?.toDouble();
+    final destinationLat = (data?['destinationLatitude'] as num?)?.toDouble();
+    final destinationLon = (data?['destinationLongitude'] as num?)?.toDouble();
+    final center = lat != null && lon != null
+        ? LatLng(lat, lon)
+        : destinationLat != null && destinationLon != null
+            ? LatLng(destinationLat, destinationLon)
+            : const LatLng(31.4504, 73.1385);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Track Parcel')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: code,
+                    decoration: const InputDecoration(labelText: 'Tracking code', border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: loading ? null : load, child: const Text('Track')),
+              ],
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
+          if (data != null)
+            ListTile(
+              title: Text('Status: ${data!['status']}'),
+              subtitle: Text('Rider: ${data!['rider']?['username'] ?? 'Not assigned'} • Updated ${data!['updatedAtUtc']}'),
+            ),
+          Expanded(
+            child: FlutterMap(
+              options: MapOptions(initialCenter: center, initialZoom: 14),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.findupto.pos',
+                ),
+                if (lat != null && lon != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: LatLng(lat, lon),
+                        width: 48,
+                        height: 48,
+                        child: const Icon(Icons.delivery_dining, size: 42),
+                      ),
+                    ],
+                  ),
+                if (destinationLat != null && destinationLon != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: LatLng(destinationLat, destinationLon),
+                        width: 48,
+                        height: 48,
+                        child: const Icon(Icons.location_pin, size: 42),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
