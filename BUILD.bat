@@ -47,7 +47,12 @@ call flutter test || exit /b 1
 echo [6/7] Build Windows app...
 call flutter build windows --release --dart-define=POS_SERVER_URL=http://127.0.0.1:5000 || exit /b 1
 if not exist "build\windows\x64\runner\Release\findupto_pos_mobile.exe" goto WindowsBuildFailed
-copy /y "build\windows\x64\runner\Release\findupto_pos_mobile.exe" "..\..\artifacts\windows-pos-app\findupto_pos_mobile.exe" >nul || exit /b 1
+if not exist "build\windows\x64\runner\Release\flutter_windows.dll" goto WindowsBuildFailed
+if exist "..\..\artifacts\windows-pos-app" rmdir /s /q "..\..\artifacts\windows-pos-app"
+mkdir "..\..\artifacts\windows-pos-app"
+xcopy /e /i /y "build\windows\x64\runner\Release\*" "..\..\artifacts\windows-pos-app\" >nul || exit /b 1
+if not exist "..\..\artifacts\windows-pos-app\findupto_pos_mobile.exe" goto WindowsPackageFailed
+if not exist "..\..\artifacts\windows-pos-app\flutter_windows.dll" goto WindowsPackageFailed
 
  echo [7/7] Build Android APK...
 if exist "%LOCALAPPDATA%\Android\sdk\ndk" for /d %%D in ("%LOCALAPPDATA%\Android\sdk\ndk\*") do if exist "%%~fD" if not exist "%%~fD\source.properties" rmdir /s /q "%%~fD"
@@ -67,6 +72,7 @@ netsh advfirewall firewall add rule name="FindUpTo POS TCP 5000" dir=in action=a
 
 if not exist "artifacts\windows-server\FindUpTo.Pos.Server.exe" goto PackagingFailed
 if not exist "artifacts\windows-pos-app\findupto_pos_mobile.exe" goto PackagingFailed
+if not exist "artifacts\windows-pos-app\flutter_windows.dll" goto PackagingFailed
 if not exist "artifacts\android\findupto_pos_mobile.apk" goto PackagingFailed
 
 echo.
@@ -90,15 +96,19 @@ exit /b 1
 echo ERROR: Server publish did not create the EXE.
 exit /b 1
 :WindowsBuildFailed
-echo ERROR: Windows POS EXE was not created.
+echo ERROR: Windows POS release files were not created.
+exit /b 1
+:WindowsPackageFailed
+echo ERROR: Windows POS release folder could not be packaged completely.
 exit /b 1
 :ApkBuildFailed
 echo ERROR: Android APK was not created.
 exit /b 1
 :PackagingFailed
 echo ERROR: One or more distributable files are missing.
-echo Expected files:
+echo Expected:
 echo   artifacts\windows-server\FindUpTo.Pos.Server.exe
 echo   artifacts\windows-pos-app\findupto_pos_mobile.exe
-echo   artifacts\android\findupto_pos_mobile.apk
+ echo   artifacts\windows-pos-app\flutter_windows.dll
+ echo   artifacts\android\findupto_pos_mobile.apk
 exit /b 1
