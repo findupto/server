@@ -10,15 +10,14 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
-  flutter_secure_storage: ^9.2.2
-  shared_preferences: ^2.3.2
-  sqflite: ^2.4.1
+  shared_preferences: ^2.5.3
+  sqflite: ^2.4.2
   sqflite_common_ffi: ^2.3.4
   path: ^1.9.0
   signalr_netcore: ^1.4.4
-  geolocator: ^14.0.2
+  geolocator: ^14.0.3
   flutter_map: ^8.2.2
-  latlong2: ^0.9.1
+  latlong2: ^0.10.1
 
 dev_dependencies:
   flutter_test:
