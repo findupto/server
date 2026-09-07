@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../core/api_client.dart';
 
 class DesktopPosPage extends StatefulWidget {
@@ -273,7 +274,7 @@ class _DesktopPosPageState extends State<DesktopPosPage> {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: DropdownButtonFormField<int>(
-                        value: tableId,
+                        initialValue: tableId,
                         decoration: const InputDecoration(labelText: 'Table'),
                         items: tables.map((raw) {
                           final table = Map<String, dynamic>.from(raw);
@@ -316,7 +317,7 @@ class _DesktopPosPageState extends State<DesktopPosPage> {
                         Text('Total  Rs. ${total.toStringAsFixed(2)}', style: Theme.of(context).textTheme.headlineSmall),
                         const SizedBox(height: 8),
                         DropdownButtonFormField<String>(
-                          value: paymentMethod,
+                          initialValue: paymentMethod,
                           decoration: const InputDecoration(labelText: 'Payment'),
                           items: const ['Cash', 'Card', 'Online']
                               .map((x) => DropdownMenuItem(value: x, child: Text(x)))
