@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo ========================================
 echo FindUpTo POS - reproducible build
- echo ========================================
+echo ========================================
 
 where dotnet >nul 2>nul
 if errorlevel 1 (
@@ -66,6 +66,16 @@ call flutter build windows --release
 if errorlevel 1 exit /b 1
 
  echo [7/7] Build Android APK...
+rem Remove only incomplete Android NDK installations. A missing source.properties
+rem means the SDK download was interrupted/corrupted; Gradle can then provision it again.
+if exist "%LOCALAPPDATA%\Android\sdk\ndk" (
+  for /d %%D in ("%LOCALAPPDATA%\Android\sdk\ndk\*") do (
+    if exist "%%~fD" if not exist "%%~fD\source.properties" (
+      echo Removing incomplete Android NDK: %%~fD
+      rmdir /s /q "%%~fD"
+    )
+  )
+)
 call flutter build apk --release
 if errorlevel 1 exit /b 1
 
