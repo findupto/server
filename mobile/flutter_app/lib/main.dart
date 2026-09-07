@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'core/api_client.dart';
 import 'features/customer/parcel_tracking_page.dart';
@@ -15,6 +17,13 @@ class PosMobileApp extends StatelessWidget {
       );
 }
 
+String _defaultServerUrl() {
+  const configured = String.fromEnvironment('POS_SERVER_URL');
+  if (configured.isNotEmpty) return configured;
+  if (!kIsWeb && Platform.isAndroid) return 'http://10.0.2.2:5000';
+  return 'http://127.0.0.1:5000';
+}
+
 class CustomerHome extends StatefulWidget {
   const CustomerHome({super.key});
 
@@ -23,12 +32,7 @@ class CustomerHome extends StatefulWidget {
 }
 
 class _CustomerHomeState extends State<CustomerHome> {
-  final api = PosApiClient(
-    baseUrl: const String.fromEnvironment(
-      'POS_SERVER_URL',
-      defaultValue: 'http://127.0.0.1:5000',
-    ),
-  );
+  final api = PosApiClient(baseUrl: _defaultServerUrl());
   final cart = <int, Map<String, dynamic>>{};
   List<dynamic> products = [];
   String businessName = 'FindUpTo POS';
@@ -52,7 +56,7 @@ class _CustomerHomeState extends State<CustomerHome> {
       if (configuredName.isNotEmpty) businessName = configuredName;
       error = null;
     } catch (e) {
-      error = e.toString();
+      error = 'Cannot connect to POS server at ${api.baseUrl}.\n$e';
     }
     if (mounted) setState(() => loading = false);
   }
@@ -152,20 +156,23 @@ class _CustomerHomeState extends State<CustomerHome> {
           ? const Center(child: CircularProgressIndicator())
           : error != null
               ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: () {
-                          setState(() => loading = true);
-                          _load();
-                        },
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
-                      ),
-                    ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: () {
+                            setState(() => loading = true);
+                            _load();
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               : Column(
