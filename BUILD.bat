@@ -60,6 +60,9 @@ rem locking can fail when the project and Pub cache live on different drives.
 if not exist "android\gradle.properties" type nul > "android\gradle.properties"
 >>"android\gradle.properties" echo kotlin.incremental=false
 >>"android\gradle.properties" echo kotlin.compiler.execution.strategy=in-process
+rem Android blocks plain HTTP by default. The local POS server intentionally uses
+rem HTTP for development, so allow it in the generated Android app.
+powershell -NoProfile -Command "$p='android\app\src\main\AndroidManifest.xml'; $s=Get-Content $p -Raw; if($s -notmatch 'usesCleartextTraffic'){ $s=$s -replace '<application ', '<application android:usesCleartextTraffic=\"true\" '; Set-Content $p $s }"
 call flutter clean
 if errorlevel 1 exit /b 1
 call flutter pub get
@@ -70,7 +73,7 @@ call flutter test
 if errorlevel 1 exit /b 1
 
  echo [6/7] Build Windows desktop app...
-call flutter build windows --release
+call flutter build windows --release --dart-define=POS_SERVER_URL=http://127.0.0.1:5000
 if errorlevel 1 exit /b 1
 
  echo [7/7] Build Android APK...
@@ -90,7 +93,13 @@ call flutter clean
 if errorlevel 1 exit /b 1
 call flutter pub get
 if errorlevel 1 exit /b 1
-call flutter build apk --release
+rem Prefer the host PC's first usable LAN IPv4 address so a physical Android
+rem phone on the same Wi-Fi/LAN can reach the Windows POS server.
+set "POS_ANDROID_SERVER_IP="
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'} | Select-Object -First 1 -ExpandProperty IPAddress"`) do set "POS_ANDROID_SERVER_IP=%%I"
+if not defined POS_ANDROID_SERVER_IP set "POS_ANDROID_SERVER_IP=10.0.2.2"
+echo Android POS server URL: http://%POS_ANDROID_SERVER_IP%:5000
+call flutter build apk --release --dart-define=POS_SERVER_URL=http://%POS_ANDROID_SERVER_IP%:5000
 if errorlevel 1 exit /b 1
 
 cd ..\..
@@ -110,4 +119,6 @@ echo BUILD COMPLETE
 echo Server EXE: artifacts\windows-server\FindUpTo.Pos.Server.exe
 echo Windows app: artifacts\windows-pos-app\findupto_pos_mobile.exe
 echo Android APK: artifacts\android\findupto_pos_mobile.apk
+echo Android server URL embedded in APK: http://%POS_ANDROID_SERVER_IP%:5000
+echo.
 exit /b 0
