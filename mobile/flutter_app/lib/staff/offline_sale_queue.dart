@@ -55,7 +55,6 @@ class OfflineSaleQueue {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_legacyKey);
     if (raw == null || raw.isEmpty) return;
-
     await db.transaction((txn) async {
       for (final encoded in raw) {
         try {
@@ -63,21 +62,15 @@ class OfflineSaleQueue {
           final id = '${sale['clientOperationId'] ?? ''}'.trim();
           if (id.isEmpty) continue;
           final now = DateTime.now().millisecondsSinceEpoch;
-          await txn.insert(
-            _table,
-            {
-              'client_operation_id': id,
-              'payload': jsonEncode(sale),
-              'state': 'pending',
-              'attempts': 0,
-              'created_at': now,
-              'updated_at': now,
-            },
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-        } catch (_) {
-          // One corrupt legacy entry must not block valid queued sales.
-        }
+          await txn.insert(_table, {
+            'client_operation_id': id,
+            'payload': jsonEncode(sale),
+            'state': 'pending',
+            'attempts': 0,
+            'created_at': now,
+            'updated_at': now,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        } catch (_) {}
       }
     });
     await prefs.remove(_legacyKey);
@@ -85,12 +78,7 @@ class OfflineSaleQueue {
 
   Future<List<Map<String, dynamic>>> load() async {
     final db = await _database;
-    final rows = await db.query(
-      _table,
-      where: 'state = ?',
-      whereArgs: ['pending'],
-      orderBy: 'created_at ASC',
-    );
+    final rows = await db.query(_table, where: 'state = ?', whereArgs: ['pending'], orderBy: 'created_at ASC');
     return rows.map((row) {
       final payload = row['payload'];
       if (payload is! String) throw StateError('Offline sale payload is invalid');
@@ -103,24 +91,39 @@ class OfflineSaleQueue {
     if (id.isEmpty) throw ArgumentError('Offline sale requires clientOperationId');
     final db = await _database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert(
-      _table,
-      {
-        'client_operation_id': id,
-        'payload': jsonEncode(sale),
-        'state': 'pending',
-        'attempts': 0,
-        'created_at': now,
-        'updated_at': now,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert(_table, {
+      'client_operation_id': id,
+      'payload': jsonEncode(sale),
+      'state': 'pending',
+      'attempts': 0,
+      'created_at': now,
+      'updated_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<int> count() async {
     final db = await _database;
     final result = await db.rawQuery('SELECT COUNT(*) AS count FROM $_table WHERE state = ?', ['pending']);
     return (result.single['count'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> _markAttempted(Database db, String id) async {
+    await db.rawUpdate(
+      'UPDATE $_table SET attempts = attempts + 1, updated_at = ? WHERE client_operation_id = ? AND state = ?',
+      [DateTime.now().millisecondsSinceEpoch, id, 'pending'],
+    );
+  }
+
+  Future<void> _markCompleted(Database db, String id) async {
+    await db.update(_table, {'state': 'completed', 'updated_at': DateTime.now().millisecondsSinceEpoch, 'last_error': null}, where: 'client_operation_id = ?', whereArgs: [id]);
+  }
+
+  Future<void> _markConflict(Database db, String id, String message) async {
+    await db.update(_table, {'state': 'conflict', 'updated_at': DateTime.now().millisecondsSinceEpoch, 'last_error': message}, where: 'client_operation_id = ?', whereArgs: [id]);
+  }
+
+  Future<void> _markError(Database db, String id, Object error) async {
+    await db.update(_table, {'last_error': '$error', 'updated_at': DateTime.now().millisecondsSinceEpoch}, where: 'client_operation_id = ?', whereArgs: [id]);
   }
 
   Future<SyncQueueResult> sync(PosApiClient api) async {
@@ -131,51 +134,42 @@ class OfflineSaleQueue {
     var completed = 0;
     var conflicts = 0;
 
-    for (var start = 0; start < pending.length; start += 100) {
-      final batch = pending.skip(start).take(100).toList();
-      final ids = batch.map((x) => '${x['clientOperationId']}').toList();
-      await db.transaction((txn) async {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        for (final id in ids) {
-          await txn.rawUpdate(
-            'UPDATE $_table SET attempts = attempts + 1, updated_at = ? WHERE client_operation_id = ? AND state = ?',
-            [now, id, 'pending'],
+    for (final sale in pending) {
+      final id = '${sale['clientOperationId'] ?? ''}';
+      await _markAttempted(db, id);
+      try {
+        final order = await api.createStaffOrder(
+          customerId: (sale['customerId'] as num?)?.toInt(),
+          tableId: (sale['tableId'] as num?)?.toInt(),
+          orderType: '${sale['orderType'] ?? 'Counter'}',
+          notes: '${sale['notes'] ?? ''}',
+          clientOperationId: id,
+          items: List<Map<String, dynamic>>.from((sale['items'] as List?) ?? const []),
+        );
+        final orderId = (order['id'] as num?)?.toInt();
+        if (orderId == null) throw StateError('Server did not return an order id');
+
+        final paymentMethod = '${sale['paymentMethod'] ?? ''}'.trim();
+        if (paymentMethod.isNotEmpty) {
+          await api.collectPayment(
+            orderId,
+            amountTendered: (sale['amountTendered'] as num?)?.toDouble() ?? (order['total'] as num?)?.toDouble() ?? 0,
+            method: paymentMethod,
+            reference: '${sale['paymentReference'] ?? ''}',
+            clientOperationId: '${sale['paymentClientOperationId'] ?? '$id:payment'}',
           );
         }
-      });
-
-      try {
-        final response = await api.syncPushOrders(batch);
-        final results = (response['results'] as List?) ?? const [];
-        await db.transaction((txn) async {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          for (var i = 0; i < batch.length; i++) {
-            final result = i < results.length && results[i] is Map
-                ? Map<String, dynamic>.from(results[i] as Map)
-                : const <String, dynamic>{};
-            final id = ids[i];
-            if (result['success'] == true) {
-              completed++;
-              await txn.update(_table, {'state': 'completed', 'updated_at': now, 'last_error': null}, where: 'client_operation_id = ?', whereArgs: [id]);
-            } else if (result['conflict'] == true) {
-              conflicts++;
-              await txn.update(_table, {
-                'state': 'conflict',
-                'updated_at': now,
-                'last_error': '${result['error'] ?? result['message'] ?? 'Synchronization conflict'}',
-              }, where: 'client_operation_id = ?', whereArgs: [id]);
-            } else {
-              await txn.update(_table, {
-                'last_error': '${result['error'] ?? result['message'] ?? 'Synchronization failed'}',
-                'updated_at': now,
-              }, where: 'client_operation_id = ?', whereArgs: [id]);
-            }
-          }
-        });
+        await _markCompleted(db, id);
+        completed++;
       } catch (error) {
-        final now = DateTime.now().millisecondsSinceEpoch;
-        await db.update(_table, {'last_error': '$error', 'updated_at': now}, where: 'state = ? AND client_operation_id IN (${List.filled(ids.length, '?').join(',')})', whereArgs: ['pending', ...ids]);
-        break;
+        final message = '$error';
+        if (message.toLowerCase().contains('conflict') || message.contains('409')) {
+          await _markConflict(db, id, message);
+          conflicts++;
+        } else {
+          await _markError(db, id, error);
+          break;
+        }
       }
     }
 
