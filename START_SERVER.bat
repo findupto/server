@@ -16,6 +16,8 @@ if not defined INITIAL_WAITER_PASSWORD set "INITIAL_WAITER_PASSWORD=Waiter-Test-
 if not defined INITIAL_COUNTER_PASSWORD set "INITIAL_COUNTER_PASSWORD=Counter-Test-Password-123!"
 if not defined ASPNETCORE_ENVIRONMENT set "ASPNETCORE_ENVIRONMENT=Development"
 if not defined ASPNETCORE_URLS set "ASPNETCORE_URLS=http://0.0.0.0:5000"
+rem A fresh local install has no SQLite schema yet. Allow the server to create it.
+if not defined POS_ALLOW_SCHEMA_CREATE set "POS_ALLOW_SCHEMA_CREATE=true"
 
 if "!POS_JWT_KEY:~31,1!"=="" goto ConfigError
 if not defined INITIAL_OWNER_PASSWORD goto ConfigError
