@@ -1,14 +1,26 @@
-name: build
+name: build-and-package
 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  dotnet-test:
+    name: .NET tests
     runs-on: ubuntu-latest
+    env:
+      ASPNETCORE_ENVIRONMENT: Development
+      POS_JWT_KEY: integration-test-jwt-key-must-be-at-least-32-chars
+      INITIAL_OWNER_PASSWORD: Owner-Test-Password-123!
+      INITIAL_ADMIN_PASSWORD: Admin-Test-Password-123!
+      INITIAL_WAITER_PASSWORD: Waiter-Test-Password-123!
+      INITIAL_COUNTER_PASSWORD: Counter-Test-Password-123!
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -16,4 +28,68 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet restore FindUpTo.Pos.Server.sln
       - run: dotnet build FindUpTo.Pos.Server.sln --configuration Release --no-restore
-      - run: dotnet test tests/FindUpTo.Pos.Server.Tests/FindUpTo.Pos.Server.Tests.csproj --configuration Release
+      - run: dotnet test tests/FindUpTo.Pos.Server.Tests/FindUpTo.Pos.Server.Tests.csproj --configuration Release --no-build
+
+  package-windows:
+    name: Windows EXEs and Flutter apps
+    runs-on: windows-latest
+    needs: dotnet-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: dotnet restore FindUpTo.Pos.Server.sln
+      - name: Publish server EXE
+        shell: pwsh
+        run: .\deploy\windows\publish.ps1
+      - name: Publish printer agent EXE
+        shell: pwsh
+        run: dotnet publish tools/FindUpTo.PrinterAgent/FindUpTo.PrinterAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/windows-printer-agent
+      - name: Generate Flutter platforms
+        working-directory: mobile/flutter_app
+        shell: pwsh
+        run: flutter create . --platforms=android,windows
+      - name: Flutter packages
+        working-directory: mobile/flutter_app
+        run: flutter pub get
+      - name: Flutter analyze
+        working-directory: mobile/flutter_app
+        run: flutter analyze
+      - name: Flutter test
+        working-directory: mobile/flutter_app
+        run: flutter test
+      - name: Build Windows app
+        working-directory: mobile/flutter_app
+        run: flutter build windows --release
+      - name: Build Android APK
+        working-directory: mobile/flutter_app
+        run: flutter build apk --release
+      - name: Upload server EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: findupto-windows-server
+          path: artifacts/windows-server/
+          if-no-files-found: error
+      - name: Upload printer agent EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: findupto-windows-printer-agent
+          path: artifacts/windows-printer-agent/
+          if-no-files-found: error
+      - name: Upload Windows POS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: findupto-windows-pos-app
+          path: mobile/flutter_app/build/windows/x64/runner/Release/
+          if-no-files-found: error
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: findupto-android-apk
+          path: mobile/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
