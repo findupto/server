@@ -54,6 +54,8 @@ if errorlevel 1 exit /b 1
 cd mobile\flutter_app
 call flutter create . --platforms=android,windows
 if errorlevel 1 exit /b 1
+call flutter clean
+if errorlevel 1 exit /b 1
 call flutter pub get
 if errorlevel 1 exit /b 1
 call flutter analyze
@@ -76,6 +78,12 @@ if exist "%LOCALAPPDATA%\Android\sdk\ndk" (
     )
   )
 )
+rem Avoid Kotlin incremental-cache path errors when the project and Pub cache
+rem are on different Windows drives (for example D:\server and C:\Users\...).
+call flutter clean
+if errorlevel 1 exit /b 1
+call flutter pub get
+if errorlevel 1 exit /b 1
 call flutter build apk --release
 if errorlevel 1 exit /b 1
 
