@@ -95,9 +95,19 @@ if errorlevel 1 exit /b 1
 
 cd ..\..
 
+rem Collect every distributable in one obvious folder so the build outputs are
+rem easy to find and can be copied/uploaded as a single package.
+echo [PACKAGING] Collecting distributable EXE/APK files...
+if not exist "artifacts\windows-pos-app" mkdir "artifacts\windows-pos-app"
+if not exist "artifacts\android" mkdir "artifacts\android"
+copy /y "mobile\flutter_app\build\windows\x64\runner\Release\findupto_pos_mobile.exe" "artifacts\windows-pos-app\findupto_pos_mobile.exe" >nul
+if errorlevel 1 exit /b 1
+copy /y "mobile\flutter_app\build\app\outputs\flutter-apk\app-release.apk" "artifacts\android\findupto_pos_mobile.apk" >nul
+if errorlevel 1 exit /b 1
+
 echo.
 echo BUILD COMPLETE
 echo Server EXE: artifacts\windows-server\FindUpTo.Pos.Server.exe
-echo Windows app: mobile\flutter_app\build\windows\x64\runner\Release\findupto_pos_mobile.exe
-echo Android APK: mobile\flutter_app\build\app\outputs\flutter-apk\app-release.apk
+echo Windows app: artifacts\windows-pos-app\findupto_pos_mobile.exe
+echo Android APK: artifacts\android\findupto_pos_mobile.apk
 exit /b 0
